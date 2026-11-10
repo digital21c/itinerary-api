@@ -7,6 +7,38 @@ a decision is made, in the same commit as the change it causes.
 
 ## 2026-11-10
 
+**Restoring is a save over the deletion marker**, not a new endpoint: `POST …/versions` with
+`If-Match` naming the marker. *Why:* it is what the original design meant ("posting an old
+version's body as a new version"), and the conditional insert already handles races.
+*Alternative turned down for now:* `POST …/restore { "version": n }`, which would copy the
+body on the server; worth adding only if restoring turns out to be common.
+
+**Deleting a document requires `If-Match`.** *Why:* it is a write to content; no one should
+delete a version they haven't seen. Its `204` carries the deletion marker's `ETag`, which
+restoring needs.
+
+**The history isn't paginated** (resolving the old open decision on its cursor). *Why:*
+retention caps it at 11 entries. The rule "collections use cursor pagination" stays for any
+collection that can grow; a cursor can be added to the history later without breaking
+clients.
+
+**One version: a deletion marker and a pruned version are `410`, a number above the latest
+is `404`.** *Why:* `410` says "it existed and is gone"; `404` says "there's no such thing".
+
+**`PATCH` on a document answers like a save** (`201`, `Location`, `ETag`), accepts
+`application/merge-patch+json` or `application/json`, must be a JSON object, and a result
+over the size limit is `422`. *Why:* clients handle both writes the same way; a non-object
+patch would replace the whole document, which is what a save is for.
+
+**JSON Merge Patch is written by hand** (about 20 lines), defining members rather than
+assigning them. *Why:* no dependency needed; and assigning a member named `__proto__`
+would change the object's prototype instead of storing the data.
+
+**A deleted document can be restored** by an editor or manager until it is purged, instead
+of deletion being final. *Why:* a mistaken delete shouldn't need the operator. A restored
+document stays unpublished. This replaces the original "deleted documents never get another
+write"; the open question came from the original design saying both.
+
 **Every key-management write checks, inside the statement, that the requesting key is still
 active.** *Why:* the ban on self-revocation doesn't stop two managers revoking each other at
 the same moment, which would leave a trip with no working manager key. A check in an earlier

@@ -214,14 +214,12 @@ describe("POST /v1/documents/{id}/versions", () => {
     }
   });
 
-  it.each([
-    ["names the deletion marker", '"2"'],
-    ["names the version before it", '"1"'],
-  ])("refuses a save on a deleted document with 410, when If-Match %s", async (_d, ifMatch) => {
+  // Naming the deletion marker instead restores the document: see restore.spec.ts.
+  it("refuses a save on a deleted document with 410 when If-Match names an older version", async () => {
     const document = await createDocument();
     await markDeleted(document.id, 2);
 
-    const response = await saveVersion(document.id, document.editorKey, ifMatch);
+    const response = await saveVersion(document.id, document.editorKey, '"1"');
 
     expect(response.status).toBe(410);
     expect(await storedVersions(document.id)).toEqual([1, 2]);

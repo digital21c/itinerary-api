@@ -112,3 +112,76 @@ describe("D1DocumentRepository.appendVersion", () => {
     expect(await versionsOf(document.id)).toEqual([3, 4]);
   });
 });
+
+describe("D1DocumentRepository.deleteDocument", () => {
+  // The route checks the base first; these are the checks in the batch itself, which stop a
+  // delete racing a save or another delete.
+  async function publishedDocument() {
+    const repository = new D1DocumentRepository(env.DB);
+    const document = await newDocument(await insertCreatorKeyRow(), new Date());
+    await repository.create(document);
+    await env.DB.prepare(
+      "insert into document_publications (document_id, version, published_at) values (?1, 1, ?2)",
+    )
+      .bind(document.id, new Date().toISOString())
+      .run();
+    const editorKeyId = document.keys.find((key) => key.permission === "editor")?.id ?? "";
+    return { repository, documentId: document.id, editorKeyId };
+  }
+
+  async function state(documentId: string) {
+    return env.DB.prepare(
+      `select (select group_concat(version || ':' || deleted, ',') from
+                (select version, deleted from document_versions
+                 where document_id = ?1 order by version)) as versions,
+              (select version from document_publications where document_id = ?1) as published`,
+    )
+      .bind(documentId)
+      .first();
+  }
+
+  function deletion(documentId: string, baseVersion: number, createdBy: string) {
+    return {
+      documentId,
+      baseVersion,
+      markerVersion: baseVersion + 1,
+      createdAt: new Date().toISOString(),
+      createdBy,
+    };
+  }
+
+  it("inserts the marker and unpublishes when the base is the latest", async () => {
+    const { repository, documentId, editorKeyId } = await publishedDocument();
+
+    expect(await repository.deleteDocument(deletion(documentId, 1, editorKeyId), 10)).toBe(
+      "deleted",
+    );
+    expect(await state(documentId)).toEqual({ versions: "1:0,2:1", published: null });
+  });
+
+  it("changes nothing, and keeps the publication, when the base is no longer the latest", async () => {
+    const { repository, documentId, editorKeyId } = await publishedDocument();
+    await repository.appendVersion(
+      {
+        documentId,
+        baseVersion: 1,
+        newVersion: 2,
+        body: "{}",
+        createdAt: new Date().toISOString(),
+        createdBy: editorKeyId,
+      },
+      10,
+    );
+
+    expect(await repository.deleteDocument(deletion(documentId, 1, editorKeyId), 10)).toBe("stale");
+    expect(await state(documentId)).toEqual({ versions: "1:0,2:0", published: 1 });
+  });
+
+  it("never stacks a second marker on a deleted document", async () => {
+    const { repository, documentId, editorKeyId } = await publishedDocument();
+    await repository.deleteDocument(deletion(documentId, 1, editorKeyId), 10);
+
+    expect(await repository.deleteDocument(deletion(documentId, 2, editorKeyId), 10)).toBe("stale");
+    expect(await state(documentId)).toEqual({ versions: "1:0,2:1", published: null });
+  });
+});

@@ -87,6 +87,51 @@ export interface DocumentRepository {
    * `"stale"` if someone else saved first, in which case nothing was inserted.
    */
   appendVersion(version: NewVersion, maxVersions: number): Promise<"appended" | "stale">;
+
+  /** The retained versions without bodies, newest first, and the published version number. */
+  history(documentId: string): Promise<DocumentHistory>;
+
+  /**
+   * In one query: the active key with this hash on this document, version `version` with its
+   * body (`null` if it isn't stored: pruned, or never existed) and the latest version number,
+   * which tells those two apart. `null` if there is no such key.
+   */
+  findVersion(
+    documentId: string,
+    keyHash: Uint8Array,
+    version: number,
+    now: Date,
+  ): Promise<VersionLookup | null>;
+
+  /**
+   * Deletes the document if `baseVersion` is still the latest and isn't a deletion marker:
+   * inserts the deletion marker as `markerVersion`, removes the publication and prunes, in
+   * one batch. `"stale"` if someone else wrote first, in which case nothing changed.
+   */
+  deleteDocument(
+    deletion: Omit<NewVersion, "body" | "newVersion"> & { markerVersion: number },
+    maxVersions: number,
+  ): Promise<"deleted" | "stale">;
+}
+
+export interface HistoryEntry {
+  version: number;
+  createdAt: string;
+  /** The document key that saved it; `null` for version 1, made with a creator key. */
+  createdBy: string | null;
+  deleted: boolean;
+}
+
+export interface DocumentHistory {
+  /** Newest first. Never empty: a document always keeps at least its latest version. */
+  versions: HistoryEntry[];
+  /** `null` when nothing is published. */
+  published: number | null;
+}
+
+export interface VersionLookup extends AuthenticatedLookup {
+  latestVersion: number;
+  version: VersionWithBody | null;
 }
 
 export interface PublishedVersion {

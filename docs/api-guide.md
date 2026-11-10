@@ -42,12 +42,12 @@ than copying them.
 | `POST /v1/documents/{id}/keys`             | Issue a key                          | Built   |
 | `PATCH /v1/documents/{id}/keys/{keyId}`    | Change a key's expiry                | Built   |
 | `DELETE /v1/documents/{id}/keys/{keyId}`   | Revoke a key                         | Built   |
-| `GET /v1/documents/{id}/versions`          | History: numbers and dates, no bodies | Planned (step 7) |
-| `GET /v1/documents/{id}/versions/{n}`      | One version                          | Planned (step 7) |
-| `PATCH /v1/documents/{id}`                 | JSON Merge Patch on the latest version | Planned (step 7) |
-| `DELETE /v1/documents/{id}`                | Delete the trip                      | Planned (step 7) |
+| `GET /v1/documents/{id}/versions`          | History: numbers and dates, no bodies | Built   |
+| `GET /v1/documents/{id}/versions/{n}`      | One version                          | Built   |
+| `PATCH /v1/documents/{id}`                 | JSON Merge Patch on the latest version | Built   |
+| `DELETE /v1/documents/{id}`                | Delete the trip                      | Built   |
 
-Only built endpoints are in `openapi.yaml`.
+Every endpoint is in `openapi.yaml`.
 
 ## Keys: the rules every client follows
 
@@ -93,8 +93,32 @@ Only built endpoints are in `openapi.yaml`.
 7. To avoid re-downloading, send `If-None-Match: "3"` on the `GET`: `304` means it hasn't
    changed.
 
+8. To change only part of a trip, `PATCH /v1/documents/{id}` with a JSON Merge Patch
+   (`application/merge-patch+json`), the same `If-Match`, and only what changes:
+   `{ "title": "Kyoto and Osaka", "notes": null }` sets `title` and removes `notes`. Arrays
+   are replaced whole, so to change one day send the whole `days` array. A patch can't set
+   a value to `null`. The answer is the same as a save: `201` with the new `ETag`.
+
 Only the newest 10 versions are kept (plus the published one), so history is for recent
 recovery, not an archive.
+
+## Workflow: history, delete and restore (staff)
+
+- **History:** `GET /v1/documents/{id}/versions` →
+  `{ latest, oldestAvailable, published, versions: [{ version, createdAt, createdBy, deleted }] }`,
+  newest first, no bodies, not paginated (at most 11 entries). `createdBy` is the ID of the
+  key that saved it (match it to a label in the key list); `null` for version 1.
+- **One version:** `GET /v1/documents/{id}/versions/{n}` → the body exactly as stored. It
+  never changes, so cache it for good. `410` means it was pruned or is a deletion marker;
+  `404` means there is no such version yet.
+- **Delete:** `DELETE /v1/documents/{id}` with `If-Match` naming the latest version →
+  `204`, and its `ETag` is the deletion marker's version: keep it. Travellers get `404`
+  at once.
+- **Restore:** while deleted, the history and old versions stay readable. Fetch the version
+  you want back (`GET …/versions/{n}`), then save its body with
+  `POST /v1/documents/{id}/versions` and `If-Match` naming the deletion marker (the `ETag`
+  from the delete, or `latest` from the history). The trip comes back **unpublished**:
+  publish again when it's ready. Any other `If-Match` on a deleted trip is `410`.
 
 ## Workflow: publish (staff)
 
@@ -182,9 +206,9 @@ apart, `type` is a `/problems/…` URI, such as `/problems/document-limit-reache
 | `400`  | Malformed: invalid JSON or UTF-8, bad `If-Match`      | Fix the request (a bug)   |
 | `401`  | This key doesn't work here (never says why)          | Ask for a valid key       |
 | `403`  | The key works on this trip but can't do this         | Use a key with more rights |
-| `404`  | Nothing published (readers), or no such key on this trip | Show "not available yet", or refresh the key list |
+| `404`  | Nothing published (readers), no such key on this trip, or no such version yet | Show "not available yet", or refresh the list |
 | `409`  | See `type`: a cap was reached (`document-limit-reached`, `key-limit-reached`), the key is revoked (`key-revoked`), or a manager key tried to revoke itself (`cannot-revoke-own-key`) | Tell the user; no retry |
-| `410`  | The trip was deleted                                 | Stop editing it           |
+| `410`  | The trip was deleted, or that version was pruned or is a deletion marker | Stop editing; offer to restore |
 | `412`  | Someone saved first                                  | Fetch the latest, merge, save again |
 | `413`  | Body over the size limit                             | Tell the user the trip is too big |
 | `415`  | Body isn't `application/json`                        | Fix the request (a bug)   |

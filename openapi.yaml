@@ -133,9 +133,113 @@ paths:
         "410":
           $ref: "#/components/responses/DocumentGone"
 
+    patch:
+      operationId: patchDocument
+      summary: Change part of the latest version (JSON Merge Patch)
+      description: |
+        Editor or manager. The body is a JSON Merge Patch (RFC 7396) applied to the latest
+        version: a member with a value sets it (objects merge recursively), a member that is
+        `null` removes it, and arrays are replaced whole. The result is stored as a new full
+        version, exactly as if it had been sent to `POST …/versions`.
+
+        A merge patch can't set a value to `null`, and changing one element of an array means
+        sending the whole array.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          $ref: "#/components/responses/VersionCreated"
+        "400":
+          $ref: "#/components/responses/BadIfMatchOrBody"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/DocumentGone"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "413":
+          $ref: "#/components/responses/ContentTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          description: |
+            The patch isn't a JSON object, or the patched document would be over 200,000 bytes.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+    delete:
+      operationId: deleteDocument
+      summary: Delete the document
+      description: |
+        Editor or manager, with `If-Match` naming the latest version, so no one deletes a
+        version they haven't seen. Stores a deletion marker as the next version and
+        unpublishes the document, so readers get `404` at once.
+
+        A deleted document can be restored until it is purged: see `POST …/versions`. The
+        `ETag` of this response is the deletion marker's version, which restoring needs.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Deleted.
+          headers:
+            ETag:
+              description: The deletion marker's version, such as `"6"`.
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadIfMatchOrBody"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/DocumentGone"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
   /v1/documents/{id}/versions:
     parameters:
       - $ref: "#/components/parameters/DocumentId"
+    get:
+      operationId: listVersions
+      summary: The history
+      description: |
+        Editor or manager; also while the document is deleted, so a version can be found to
+        restore. The retained versions, newest first, without bodies: at most the newest 10
+        plus the published one, so there is no pagination.
+      responses:
+        "200":
+          description: The history.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/History"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: saveVersion
       summary: Save a new full version
@@ -149,6 +253,12 @@ paths:
         save that succeeded but timed out also gets `412`.
 
         Only the newest 10 versions are kept, plus the published version if it is older.
+
+        **Restoring a deleted document:** while the document is deleted, a save whose
+        `If-Match` names the deletion marker (the `ETag` from `DELETE`, or `latest` in the
+        history) restores it, with this body as its content: usually an earlier version's body
+        from `GET …/versions/{version}`. The restored document is unpublished. Any other
+        `If-Match` on a deleted document is `410`.
       parameters:
         - name: If-Match
           in: header
@@ -201,6 +311,66 @@ paths:
           $ref: "#/components/responses/UnprocessableContent"
         "428":
           description: "`If-Match` is missing."
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/documents/{id}/versions/{version}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+      - name: version
+        in: path
+        required: true
+        description: The version number.
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: getVersion
+      summary: Read one version
+      description: |
+        Editor or manager; also while the document is deleted. A version never changes, so
+        the response may be cached for good.
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          description: The version's tag, such as `"3"`, if you have it already → `304`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The version, exactly as stored.
+          headers:
+            ETag:
+              $ref: "#/components/headers/VersionETag"
+            Cache-Control:
+              description: Always `private, max-age=31536000, immutable`.
+              schema:
+                type: string
+                const: private, max-age=31536000, immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentBody"
+        "304":
+          description: Not modified.
+          headers:
+            ETag:
+              $ref: "#/components/headers/VersionETag"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The document has no version with that number (it is above the latest).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "410":
+          description: The version was pruned, or it is a deletion marker (which has no content).
           content:
             application/problem+json:
               schema:
@@ -492,6 +662,14 @@ paths:
 
 components:
   parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: The version you are changing, as a single strong tag such as `"3"`.
+      schema:
+        type: string
+        pattern: '^"[1-9][0-9]*"$'
     DocumentId:
       name: id
       in: path
@@ -635,6 +813,43 @@ components:
             - type: "null"
           description: A date sets or extends the expiry; `null` removes it.
 
+    History:
+      type: object
+      required: [latest, oldestAvailable, published, versions]
+      additionalProperties: false
+      properties:
+        latest:
+          type: integer
+          description: The latest version; a deletion marker if the document is deleted.
+        oldestAvailable:
+          type: integer
+          description: The oldest version still stored.
+        published:
+          type: [integer, "null"]
+          description: The published version, or `null`.
+        versions:
+          type: array
+          description: Newest first.
+          items:
+            type: object
+            required: [version, createdAt, createdBy, deleted]
+            additionalProperties: false
+            properties:
+              version:
+                type: integer
+              createdAt:
+                type: string
+                format: date-time
+              createdBy:
+                type: [string, "null"]
+                format: uuid
+                description: |
+                  The ID of the key that saved it (see the key list); `null` for version 1,
+                  made when the document was created.
+              deleted:
+                type: boolean
+                description: A deletion marker, which has no content.
+
     CreatedDocument:
       type: object
       required: [id, managerKey, editorKey, readerKey]
@@ -672,6 +887,34 @@ components:
           type: string
 
   responses:
+    VersionCreated:
+      description: Saved as a new version. There is no response body.
+      headers:
+        Location:
+          description: The new version's URL.
+          schema:
+            type: string
+            example: /v1/documents/7d1c0a4e-2b3f-4f60-9c1a-5e8d2f6b9a01/versions/4
+        ETag:
+          $ref: "#/components/headers/VersionETag"
+    BadIfMatchOrBody:
+      description: "`If-Match` isn't a single version tag, or the body isn't valid JSON or UTF-8."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PreconditionFailed:
+      description: Someone wrote a newer version after the one in `If-Match`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PreconditionRequired:
+      description: "`If-Match` is missing."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
     BadRequest:
       description: The body isn't valid JSON or valid UTF-8.
       content:

@@ -114,3 +114,27 @@ export function cannotRevokeOwnKey(): Response {
       "Issue a new manager key and use it to revoke this one.",
   });
 }
+
+export function versionNotFound(): Response {
+  return problemResponse({
+    status: 404,
+    title: "Not Found",
+    detail: "This document has no version with that number.",
+  });
+}
+
+export function versionPruned(): Response {
+  return problemResponse({
+    status: 410,
+    title: "Gone",
+    detail: "That version was pruned: only the newest versions and the published one are kept.",
+  });
+}
+
+export function versionIsDeletionMarker(): Response {
+  return problemResponse({
+    status: 410,
+    title: "Gone",
+    detail: "That version marks the document's deletion; it has no content.",
+  });
+}

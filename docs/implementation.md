@@ -128,6 +128,17 @@ Points worth knowing:
   race. The new number comes from `nextVersion` in `models/versions.ts`, not from the SQL.
   Pruning lives here, not in a trigger (hidden behaviour) or a scheduled job (growth between
   runs).
+- **Deleting** (`documents.deleteDocument`): one batch of `INSERT_DELETION_MARKER_SQL`
+  (only over the current latest version, and only if that isn't already a deletion marker),
+  `UNPUBLISH_DELETED_SQL` (only if this batch's marker is now stored, so a stale delete can't
+  take the trip offline) and the usual prune. `changes = 0` on the first → `412`.
+- **Restoring** needs no SQL of its own: it is `appendVersion` over the deletion marker. The
+  route allows it (`checkWritePreconditions` with `allowRestore`); the conditional insert
+  already makes two simultaneous restores `201` and `412`.
+- **History and one version**: `HISTORY_SQL` lists the retained versions newest first with
+  the published number on every row (≤ 11 rows: no pagination). `FIND_VERSION_SQL` returns
+  the key, the requested version (left join) and the latest number, which tells pruned
+  (`410`) from never existed (`404`) without a second query.
 - **Publishing** (`publications.publish`): one upsert, `PUBLISH_SQL`, that only publishes an
   existing non-deleted version of a document whose latest version isn't a deletion marker,
   so a publish racing a delete can't make a deleted document readable (`changes = 0` → `422`).
@@ -158,7 +169,8 @@ Points worth knowing:
 ## Requests (`src/routes/`, `src/utils/`)
 
 - Order of checks on a write: key (`401`/`403`), preconditions (`428`/`400`/`410`/`412`),
-  then the body. Preconditions come before the body is read (RFC 9110 §13.2.1), which also
+  then the body. `routes/preconditions.ts` (`checkWritePreconditions`) is the one place
+  saves, `PATCH` and `DELETE` evaluate `If-Match`, and where restoring is allowed. Preconditions come before the body is read (RFC 9110 §13.2.1), which also
   saves the CPU of parsing a body that would be refused.
 - `utils/request-body.ts` counts bytes while reading (Hono's `bodyLimit` trusts
   `Content-Length`) and decodes strict UTF-8. `routes/json-body.ts` adds JSON parsing and a
@@ -169,7 +181,15 @@ Points worth knowing:
 - `routes/keys.ts` maps a stored key to the API's shape (`keySummary`): expiry as the last
   valid day (`dateFromExpiresAt`), `status` from `keyStatus`, and `isCurrentKey`.
 - `routes/version-response.ts` sends a stored version (`200` or `304`) the same way for the
-  latest and the published version.
+  latest, the published and a numbered version; only the `Cache-Control` differs
+  (`REVALIDATE` or `IMMUTABLE`).
+- `PATCH /v1/documents/{id}` reads the patch with the document size limit, applies it with
+  `applyMergePatch` (`models/merge-patch.ts`, RFC 7396, written by hand, tested with every
+  example in the RFC) to the parsed latest body, and refuses a result over the limit with
+  `422` (the request itself may be small). `applyMergePatch` defines members rather than
+  assigning them, so a JSON member named `__proto__` is stored as data, never as a
+  prototype. Measured: about 0.3 ms for a flat 200 KB document and about 1.2 ms for a
+  150 KB itinerary of nested objects, well inside 10 ms of CPU.
 - `app.onError` logs only the error's name and message, never the request, so a key can't
   reach the logs that way, and answers a generic `500`.
 

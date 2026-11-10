@@ -179,8 +179,8 @@ dependency.
 5. ✅ **Publish and read:** `PUT`, `GET` and `DELETE …/published`.
 6. ✅ **Keys:** list, issue, change expiry and revoke, plus document keys' hourly
    `last_used_at`.
-7. **The rest:** history, one version, `PATCH` (merge patch), `DELETE` a document. Needs
-   Open Decision 5 first.
+7. ✅ **The rest:** history, one version, `PATCH` (merge patch), `DELETE` a document, and
+   restoring a deleted document.
 
 # Open Decisions
 
@@ -195,11 +195,6 @@ Ask before building anything that depends on these.
 3. **Document body schema:** the itinerary schema hasn't been designed yet. Until it is,
    a body is any JSON object within the size limit, and `documents.type` is always
    `'itinerary'`. The real schema will tighten this, and should avoid open-ended text.
-4. **History pagination:** the cursor format and page size for `GET …/versions`.
-5. **Restoring deleted documents:** the original design says both "deleted documents never
-   get another write" (enforced: saves on a deleted document get `410`) and "restoring a
-   document doesn't republish it", which implies undeleting. Decide before step 7 whether a
-   deleted document can be restored, or deletion is final until the purge.
 
 # Design And Implementation
 

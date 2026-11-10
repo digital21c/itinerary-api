@@ -154,15 +154,29 @@ Access to the Cloudflare account bypasses every key; it is the real power in the
 - The latest version is the working draft. Editors read it with its version number (as an
   `ETag`) and save over it by naming that version (`If-Match`). If someone else saved first,
   the save is refused with `412`, so no one's changes are silently lost.
-- Deleting a document stores a deletion-marker version. A deleted document can't be saved
-  to or published, and editors reading it get `410 Gone`.
+- Editors can also change part of the latest version with a JSON Merge Patch (RFC 7396): a
+  member with a value sets it, `null` removes it, arrays are replaced whole. The result is
+  stored as a new full version, exactly like a save.
+- Deleting a document needs `If-Match` naming the latest version, like a save, so no one
+  deletes a version they haven't seen. It stores a deletion-marker version and unpublishes
+  the document. While deleted, it can't be edited, published or given new keys, and editors
+  reading its latest version get `410 Gone`.
+- **A deleted document can be restored** by an editor or manager until it is purged.
+  Restoring is a save whose `If-Match` names the deletion marker, usually with the body of
+  an earlier version from the history, which stays readable to editors while the document
+  is deleted. A restored document is unpublished: readers get `404` until someone publishes
+  again. Its keys work as before, and keys revoked meanwhile stay revoked.
 - Keys and the publication are settings that can change; version content never does.
 - The latest version and the published version have separate URLs, so one URL never returns
   different content depending on which key asks.
-- History (build step 7) lists version numbers and dates without bodies, says which is the
-  oldest still available, and is paginated with a cursor. A single version never changes,
-  so it can be cached for good (`Cache-Control: private, max-age=31536000, immutable`;
-  `private` because responses depend on a key).
+- The history lists the retained versions newest first, without bodies: number, date, which
+  key saved it, and whether it is a deletion marker, plus the latest, the oldest still
+  available and the published version. It holds at most 11 entries (10 plus the published
+  one), so it isn't paginated.
+- A single version never changes, so it can be cached for good
+  (`Cache-Control: private, max-age=31536000, immutable`; `private` because responses depend
+  on a key). A pruned version and a deletion marker are `410 Gone`; a number above the
+  latest is `404`.
 
 ## Publishing
 

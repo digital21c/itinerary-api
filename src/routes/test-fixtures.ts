@@ -331,3 +331,58 @@ export async function storedKeyRow(key: string) {
       revoked_at: string | null;
     }>();
 }
+
+export function deleteDocument(
+  documentId: string,
+  key: string | null,
+  ifMatch: string | null,
+): Promise<Response> {
+  const precondition: Record<string, string> = ifMatch === null ? {} : { "If-Match": ifMatch };
+  return request(`/v1/documents/${documentId}`, {
+    method: "DELETE",
+    headers: { ...authorization(key), ...precondition },
+  });
+}
+
+export function patchDocument(
+  documentId: string,
+  key: string,
+  ifMatch: string | null,
+  patch: unknown,
+  contentType = "application/merge-patch+json",
+): Promise<Response> {
+  const precondition: Record<string, string> = ifMatch === null ? {} : { "If-Match": ifMatch };
+  return request(`/v1/documents/${documentId}`, {
+    method: "PATCH",
+    body: typeof patch === "string" ? patch : JSON.stringify(patch),
+    headers: { ...authorization(key), "Content-Type": contentType, ...precondition },
+  });
+}
+
+export interface History {
+  latest: number;
+  oldestAvailable: number;
+  published: number | null;
+  versions: { version: number; createdAt: string; createdBy: string | null; deleted: boolean }[];
+}
+
+export function getHistory(documentId: string, key: string | null): Promise<Response> {
+  return request(`/v1/documents/${documentId}/versions`, { headers: authorization(key) });
+}
+
+export async function historyOf(documentId: string, key: string): Promise<History> {
+  const response = await getHistory(documentId, key);
+  expect(response.status).toBe(200);
+  return response.json<History>();
+}
+
+export function getVersion(
+  documentId: string,
+  key: string | null,
+  version: number | string,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return request(`/v1/documents/${documentId}/versions/${String(version)}`, {
+    headers: { ...authorization(key), ...headers },
+  });
+}
