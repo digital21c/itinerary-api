@@ -582,6 +582,29 @@ group can share one address). Check what the free plan includes at that point.
 - Small functions with strong types. Avoid `any`; use `unknown` and narrow.
 - Commits use the GitHub no-reply email.
 
+# Build Plan
+
+Agreed 2026-11-10. Each step: write its part of `openapi.yaml` first, include the
+security-boundary tests that apply to it, pass `npm run check`, then commit. Describe the
+design of a step before starting it if it adds an endpoint, a folder or a dependency.
+
+1. **Keys:** generate, hash and recognise keys as pure functions (`src/auth/keys.ts`),
+   with unit tests.
+2. **Admin script:** issue a creator key (`scripts/`). It prints the key once and inserts
+   only its hash with `wrangler d1 execute --command`.
+3. **Create a trip:** the repository's creation batch and `POST /v1/documents`, which checks
+   the creator key and returns the three keys. Also the HTTP groundwork every later route
+   uses: Problem Details errors, body-size limit and Zod validation, authentication
+   middleware with `Authorization` redaction, the repository interface passed into the
+   app, CORS, and the start of `openapi.yaml`.
+4. **Save a version:** `GET /v1/documents/{id}` (latest, with `ETag`) and
+   `POST /v1/documents/{id}/versions` with `If-Match`, the conflict check and pruning.
+5. **Publish and read:** `PUT …/published` and `GET …/published`, completing the first full
+   traveller path.
+6. **Keys:** list, issue, change expiry, revoke.
+7. **The rest:** history, one version, `PATCH` (merge patch), `DELETE` a document,
+   unpublish.
+
 # Open Decisions
 
 Ask before building anything that depends on these.
