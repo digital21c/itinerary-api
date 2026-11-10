@@ -80,7 +80,10 @@ documentRoutes.get("/:id", async (c) => {
   if (found.latest.deleted || body === null) {
     return documentGone();
   }
-  return versionResponse(version, body, c.req.header("If-None-Match"));
+  return versionResponse(version, body, {
+    ifNoneMatch: c.req.header("If-None-Match"),
+    lastModified: found.latest.createdAt,
+  });
 });
 
 /**
@@ -280,7 +283,11 @@ documentRoutes.get("/:id/versions/:version", async (c) => {
   if (found.version.deleted || found.version.body === null) {
     return versionIsDeletionMarker();
   }
-  return versionResponse(requested, found.version.body, c.req.header("If-None-Match"), IMMUTABLE);
+  return versionResponse(requested, found.version.body, {
+    ifNoneMatch: c.req.header("If-None-Match"),
+    lastModified: found.version.createdAt,
+    cacheControl: IMMUTABLE,
+  });
 });
 
 /** Inserts the next version over `baseVersion` and answers `201`, or `412` if someone wrote first. */

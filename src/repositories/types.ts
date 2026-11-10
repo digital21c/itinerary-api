@@ -32,6 +32,8 @@ export interface VersionHead {
   version: number;
   /** A deletion marker: the document was deleted at this version. */
   deleted: boolean;
+  /** When this version was saved (ISO-8601 UTC). */
+  createdAt: string;
 }
 
 export interface VersionWithBody extends VersionHead {
@@ -138,6 +140,8 @@ export interface PublishedVersion {
   version: number;
   /** The stored JSON text. */
   body: string;
+  /** When this version was published: when what readers see last changed. */
+  publishedAt: string;
 }
 
 /** What a key lookup for the published version found. */

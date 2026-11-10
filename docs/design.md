@@ -32,7 +32,7 @@ Capability-based access: **holding a key is the permission.**
 
 | Operation                                       | Key required               |
 | ----------------------------------------------- | -------------------------- |
-| Create a document                               | Creator                    |
+| Create a document, or check a creator key       | Creator                    |
 | Read the published version                      | Reader, editor or manager  |
 | Read the latest version, history or one version | Editor or manager          |
 | New version, `PATCH`, `DELETE` a document       | Editor or manager          |
@@ -43,7 +43,12 @@ Capability-based access: **holding a key is the permission.**
 - Document keys form a ladder: reader, editor, manager, each including the one before. A
   manager could issue itself any other key, so withholding read or edit would add no security.
 - A creator key can't read or edit any document, even ones it created. A leak can only add
-  documents, and each document records which creator key made it.
+  documents, and each document records which creator key made it. Creating a trip returns
+  its manager key, so in practice whoever creates a trip manages it through that key.
+- A client can check a creator key without side effects (it creates nothing and isn't
+  recorded as use), to verify a creator link before saving it. Document keys need no
+  separate check: reading the published version answers `200` or `404` for any valid key
+  on that trip, and `401` otherwise.
 - Keys are secrets, not identifiers: 32 random bytes, base64url-encoded, with the prefix
   above. The prefix only helps people recognise a key; permission always comes from the
   server's record of it.
@@ -186,6 +191,11 @@ Access to the Cloudflare account bypasses every key; it is the real power in the
   A new document is unpublished, so its reader key gets `404` until someone publishes.
 - Publishing is idempotent and needs no `If-Match`: it states the whole intended result.
   Reverting = publishing an earlier retained version. Unpublishing makes readers get `404`.
+- Every version response carries `Last-Modified`: when that content last changed. For the
+  latest or a numbered version it is when the version was saved; for the published version,
+  when it was published, which is when what travellers see last changed. Publishing the
+  version that is already published keeps the original time. Saving drafts doesn't change
+  it for readers.
 - Deleting a document also unpublishes it, so readers lose access at once.
 - **The document is the security boundary.** Anything in a published version is visible to
   every traveller with the link. Supplier costs, commission or internal notes can't be

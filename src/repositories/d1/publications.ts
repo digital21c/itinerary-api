@@ -8,7 +8,7 @@ import { logQueryCost } from "./query-cost";
  * rather than `401`.
  */
 export const FIND_PUBLISHED_SQL = `
-  select k.id as key_id, k.permission, k.last_used_at, v.version, v.body
+  select k.id as key_id, k.permission, k.last_used_at, v.version, v.body, p.published_at
   from document_keys k
   left join document_publications p on p.document_id = k.document_id
   left join document_versions v on v.document_id = p.document_id and v.version = p.version
@@ -20,7 +20,9 @@ export const FIND_PUBLISHED_SQL = `
 /**
  * Publishes version ?2 only if it exists and isn't a deletion marker, and the document's
  * latest version isn't a deletion marker either, so a publish racing a delete can't make a
- * deleted document readable again. Replaces any earlier publication.
+ * deleted document readable again. Replaces any earlier publication. Publishing the version
+ * that is already published keeps its original time and publisher, because what readers see
+ * hasn't changed: that time is their Last-Modified.
  */
 export const PUBLISH_SQL = `
   insert into document_publications (document_id, version, published_at, published_by)
@@ -34,9 +36,11 @@ export const PUBLISH_SQL = `
             and deleted = 1
             and version = (select max(version) from document_versions where document_id = ?1))
   on conflict (document_id) do update set
-    version = excluded.version,
-    published_at = excluded.published_at,
-    published_by = excluded.published_by`;
+    published_at = case when version = excluded.version then published_at
+                        else excluded.published_at end,
+    published_by = case when version = excluded.version then published_by
+                        else excluded.published_by end,
+    version = excluded.version`;
 
 export const UNPUBLISH_SQL = `delete from document_publications where document_id = ?1`;
 
@@ -46,6 +50,7 @@ interface PublishedRow {
   last_used_at: string | null;
   version: number | null;
   body: string | null;
+  published_at: string | null;
 }
 
 export class D1PublicationRepository implements PublicationRepository {
@@ -70,7 +75,9 @@ export class D1PublicationRepository implements PublicationRepository {
     return {
       key,
       published:
-        row.version === null || row.body === null ? null : { version: row.version, body: row.body },
+        row.version === null || row.body === null || row.published_at === null
+          ? null
+          : { version: row.version, body: row.body, publishedAt: row.published_at },
     };
   }
 

@@ -91,6 +91,22 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableContent"
 
+  /v1/creator-key:
+    get:
+      operationId: checkCreatorKey
+      summary: Check a creator key
+      description: |
+        Creator key. Checks the key without side effects: it creates nothing and doesn't
+        record the key as used. Use it to verify a creator link before saving the key.
+      responses:
+        "204":
+          description: The key is an active creator key.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/documents/{id}:
     parameters:
       - $ref: "#/components/parameters/DocumentId"
@@ -115,6 +131,8 @@ paths:
           headers:
             ETag:
               $ref: "#/components/headers/VersionETag"
+            Last-Modified:
+              $ref: "#/components/headers/LastModified"
             Cache-Control:
               description: Always `private, no-cache`; revalidate with `If-None-Match`.
               schema:
@@ -129,6 +147,8 @@ paths:
           headers:
             ETag:
               $ref: "#/components/headers/VersionETag"
+            Last-Modified:
+              $ref: "#/components/headers/LastModified"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -348,6 +368,8 @@ paths:
           headers:
             ETag:
               $ref: "#/components/headers/VersionETag"
+            Last-Modified:
+              $ref: "#/components/headers/LastModified"
             Cache-Control:
               description: Always `private, max-age=31536000, immutable`.
               schema:
@@ -362,6 +384,8 @@ paths:
           headers:
             ETag:
               $ref: "#/components/headers/VersionETag"
+            Last-Modified:
+              $ref: "#/components/headers/LastModified"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -406,6 +430,8 @@ paths:
           headers:
             ETag:
               $ref: "#/components/headers/VersionETag"
+            Last-Modified:
+              $ref: "#/components/headers/LastModified"
             Cache-Control:
               description: Always `private, no-cache`; revalidate with `If-None-Match`.
               schema:
@@ -420,6 +446,8 @@ paths:
           headers:
             ETag:
               $ref: "#/components/headers/VersionETag"
+            Last-Modified:
+              $ref: "#/components/headers/LastModified"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -683,6 +711,14 @@ components:
         format: uuid
 
   headers:
+    LastModified:
+      description: |
+        When this content last changed, as an HTTP date (`Wed, 11 Nov 2026 09:00:00 GMT`):
+        when the version was saved, or for the published version, when it was published
+        (publishing the same version again doesn't change it). Also sent on `304`.
+      schema:
+        type: string
+        example: Wed, 11 Nov 2026 09:00:00 GMT
     NoStore:
       description: Always `no-store`.
       schema:

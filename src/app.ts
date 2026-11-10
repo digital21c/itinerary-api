@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppEnv } from "./app-env";
 import type { Repositories } from "./repositories/types";
+import { creatorKeyRoutes } from "./routes/creator-key";
 import { documentRoutes } from "./routes/documents";
 import { keyRoutes } from "./routes/keys";
 import { publicationRoutes } from "./routes/publications";
@@ -34,6 +35,7 @@ export function createApp(getRepositories: (env: Env) => Repositories): Hono<App
   app.route("/v1/documents", documentRoutes);
   app.route("/v1/documents", publicationRoutes);
   app.route("/v1/documents", keyRoutes);
+  app.route("/v1/creator-key", creatorKeyRoutes);
 
   app.notFound(() => problemResponse({ status: 404, title: "Not Found" }));
 

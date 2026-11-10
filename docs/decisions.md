@@ -7,6 +7,28 @@ a decision is made, in the same commit as the change it causes.
 
 ## 2026-11-11
 
+**Only managers issue keys, reader keys included.** The front-end's design had editors
+issuing reader keys; it now follows the API. *Why:* one role controls who has access.
+
+**`GET /v1/creator-key` checks a creator key with no side effects** (`204` or `401`). *Why:*
+the front-end verifies key links before saving them, and the only other way to test a
+creator key was to create a trip. Document keys need no such endpoint: `GET …/published`
+already answers `200`/`404` for any valid key.
+
+**The API provides "updated at" as `Last-Modified`** on every version response (`304`
+included): the save time for the latest or a numbered version, the publication time for the
+published one. Republishing the same version keeps the original time. *Why:* the front-end
+shows "altered 21 days ago"; the body is the document itself (no envelope), so the time
+belongs in a header, and `Last-Modified` is the standard one. It is CORS-safelisted, so no
+exposure is needed. *Alternative turned down:* the client writing `updatedAt` into the
+content, which every client would have to get right.
+
+**The creator acts through the manager key returned on create.** A creator key still can't
+read or edit; the front-end stores the returned manager key.
+
+**Front-end demo keys live in a git-ignored local file,** never in the repository and never
+printed in a shared transcript.
+
 **First deployment** to `https://itinerary-api.info-cce.workers.dev` (Workers Free, the
 `workers.dev` subdomain; no custom domain yet). The live database received migration 0001,
 then `PRAGMA optimize`. Verified with a temporary creator key (labelled "Deploy smoke test

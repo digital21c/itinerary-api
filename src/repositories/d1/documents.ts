@@ -16,7 +16,7 @@ import { logQueryCost } from "./query-cost";
  * rows however long the history is. `{columns}` is either with or without the body.
  */
 const LATEST_LOOKUP = `
-  select k.id as key_id, k.permission, k.last_used_at, v.version, v.deleted{columns}
+  select k.id as key_id, k.permission, k.last_used_at, v.version, v.deleted, v.created_at{columns}
   from document_keys k
   join document_versions v
     on v.document_id = k.document_id
@@ -60,7 +60,7 @@ export const FIND_VERSION_SQL = `
   select k.id as key_id, k.permission, k.last_used_at,
          (select max(version) from document_versions where document_id = k.document_id)
            as latest_version,
-         v.version, v.deleted, v.body
+         v.version, v.deleted, v.body, v.created_at
   from document_keys k
   left join document_versions v on v.document_id = k.document_id and v.version = ?3
   where k.key_hash = ?2
@@ -104,6 +104,7 @@ interface VersionLookupRow {
   version: number | null;
   deleted: number | null;
   body: string | null;
+  created_at: string | null;
 }
 
 interface LatestLookupRow {
@@ -112,6 +113,7 @@ interface LatestLookupRow {
   last_used_at: string | null;
   version: number;
   deleted: number;
+  created_at: string;
   body?: string | null;
 }
 
@@ -228,9 +230,14 @@ export class D1DocumentRepository implements DocumentRepository {
       key: { keyId: row.key_id, permission: row.permission, lastUsedAt: row.last_used_at },
       latestVersion: row.latest_version,
       version:
-        row.version === null
+        row.version === null || row.created_at === null
           ? null
-          : { version: row.version, deleted: row.deleted === 1, body: row.body },
+          : {
+              version: row.version,
+              deleted: row.deleted === 1,
+              body: row.body,
+              createdAt: row.created_at,
+            },
     };
   }
 
@@ -274,5 +281,5 @@ function keyOf(row: LatestLookupRow): LatestLookup<VersionHead>["key"] {
 }
 
 function headOf(row: LatestLookupRow): VersionHead {
-  return { version: row.version, deleted: row.deleted === 1 };
+  return { version: row.version, deleted: row.deleted === 1, createdAt: row.created_at };
 }

@@ -41,6 +41,7 @@ than copying them.
 
 | Endpoint                                   | Purpose                              | Status  |
 | ------------------------------------------ | ------------------------------------ | ------- |
+| `GET /v1/creator-key`                      | Check a creator key (no side effects) | Built   |
 | `POST /v1/documents`                       | Create a trip                        | Built   |
 | `GET /v1/documents/{id}`                   | The latest working version           | Built   |
 | `POST /v1/documents/{id}/versions`         | Save a new full version              | Built   |
@@ -75,7 +76,9 @@ Every endpoint is in `openapi.yaml`.
 
 ## Workflow: create a trip
 
-1. Get a creator key from the operator (they are issued by an admin script, not the API).
+1. Get a creator key from the operator (they are issued by an admin script, not the API),
+   typically as a link with the key in its `#` fragment. Before saving it, check it with
+   `GET /v1/creator-key`: `204` means it works (nothing is created), `401` that it doesn't.
 2. `POST /v1/documents` with the creator key and the itinerary as the JSON body (any JSON
    object for now; the itinerary schema isn't designed yet). No envelope: the body *is* the
    document.
@@ -194,6 +197,14 @@ person can be cut off without affecting anyone else.
 - On poor connections, send `If-None-Match` with the `ETag` you have: `304` means your copy
   is still current, and no body is sent. New drafts don't change the published `ETag`, so
   travellers keep getting `304` until staff publish.
+- **"Altered 21 days ago"** comes from the `Last-Modified` response header (an HTTP date,
+  e.g. `Wed, 11 Nov 2026 09:00:00 GMT`; `new Date(header)` parses it): when what travellers
+  see last changed. It is on `304` too. **"Checked 9 hours ago"** is the client's own record
+  of when it last asked. Browsers can read `Last-Modified` cross-origin without any CORS
+  configuration: it is a CORS-safelisted response header.
+- **Verifying a reader, editor or manager link:** `GET /v1/documents/{id}/published` with
+  the key answers `200` or `404` (nothing published yet) for any valid key on that trip, and
+  `401` otherwise. Only then save it.
 - Responses are `Cache-Control: private, no-cache`: a client may keep a copy (offline
   copies for travellers are still an open decision), but must revalidate before relying on
   it.

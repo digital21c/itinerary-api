@@ -44,7 +44,8 @@ docs/            This file and the other design documents
   CPU time. The API hashes before querying, so the database never sees a plaintext key.
 - `bearer.ts`: reads `Authorization: Bearer <key>` (scheme case-insensitive) and builds the
   single `401` (`WWW-Authenticate: Bearer`, `no-store`, no detail).
-- `creator-key.ts`: middleware for `POST /v1/documents`.
+- `creator-key.ts`: middleware for `POST /v1/documents` and `GET /v1/creator-key`
+  (`routes/creator-key.ts`, which answers `204` and touches nothing: the lookup only reads).
 - `document-key.ts`: `lookUpWithDocumentKey` reads a document key, refuses an ID that isn't a
   UUID without a query, and runs a repository lookup that authenticates the key; `null` = `401`.
   When the key authenticates and its `last_used_at` is due (`isLastUsedDue` in
@@ -142,6 +143,9 @@ Points worth knowing:
 - **Publishing** (`publications.publish`): one upsert, `PUBLISH_SQL`, that only publishes an
   existing non-deleted version of a document whose latest version isn't a deletion marker,
   so a publish racing a delete can't make a deleted document readable (`changes = 0` → `422`).
+  On conflict, `published_at` and `published_by` are kept when the version is unchanged
+  (`case when version = excluded.version …`; SQLite evaluates every `set` expression against
+  the old row), so republishing doesn't move readers' `Last-Modified`.
 - **Managing keys** (`D1KeyRepository`, `keys.ts`). Every write includes
   `REQUESTER_IS_ACTIVE`, an `exists` condition that the requesting key is still unrevoked
   and unexpired on this document. A check in the earlier lookup can't protect the invariant
@@ -182,7 +186,9 @@ Points worth knowing:
   valid day (`dateFromExpiresAt`), `status` from `keyStatus`, and `isCurrentKey`.
 - `routes/version-response.ts` sends a stored version (`200` or `304`) the same way for the
   latest, the published and a numbered version; only the `Cache-Control` differs
-  (`REVALIDATE` or `IMMUTABLE`).
+  (`REVALIDATE` or `IMMUTABLE`). It always sends `Last-Modified` (on `304` too), from
+  `toUTCString()`, the version's `created_at` or the publication's `published_at`, which
+  the lookups return.
 - `PATCH /v1/documents/{id}` reads the patch with the document size limit, applies it with
   `applyMergePatch` (`models/merge-patch.ts`, RFC 7396, written by hand, tested with every
   example in the RFC) to the parsed latest body, and refuses a result over the limit with

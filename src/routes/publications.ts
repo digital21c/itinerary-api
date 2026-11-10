@@ -33,7 +33,10 @@ publicationRoutes.get("/:id/published", async (c) => {
     return nothingPublished();
   }
   const { version, body } = found.published;
-  return versionResponse(version, body, c.req.header("If-None-Match"));
+  return versionResponse(version, body, {
+    ifNoneMatch: c.req.header("If-None-Match"),
+    lastModified: found.published.publishedAt,
+  });
 });
 
 /**
