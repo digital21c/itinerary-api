@@ -3,6 +3,8 @@
 A store of versioned travel itineraries, reached through a hand-built HTTP API on
 Cloudflare Workers and D1. Access is by bearer keys: holding a key is the permission.
 
+Live at **https://itinerary-api.info-cce.workers.dev** (every path starts with `/v1`).
+
 | Read this                                    | For                                             |
 | -------------------------------------------- | ----------------------------------------------- |
 | [docs/api-guide.md](docs/api-guide.md)       | Building a client: workflows, errors, rules     |

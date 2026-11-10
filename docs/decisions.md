@@ -5,6 +5,14 @@ result; this log keeps the "why" and the alternatives that were turned down. Und
 questions are under **Open Decisions** in [`CLAUDE.md`](../CLAUDE.md). Add an entry whenever
 a decision is made, in the same commit as the change it causes.
 
+## 2026-11-11
+
+**First deployment** to `https://itinerary-api.info-cce.workers.dev` (Workers Free, the
+`workers.dev` subdomain; no custom domain yet). The live database received migration 0001,
+then `PRAGMA optimize`. Verified with a temporary creator key (labelled "Deploy smoke test
+2026-11-11", revoked afterwards) and one test trip, deleted afterwards and still present
+until a purge.
+
 ## 2026-11-10
 
 **Restoring is a save over the deletion marker**, not a new endpoint: `POST …/versions` with

@@ -6,6 +6,15 @@ must follow. The exact contract (every endpoint, header, status and schema) is
 [`openapi.yaml`](../openapi.yaml); the reasons behind the rules are in
 [design.md](design.md).
 
+## Where it runs
+
+| Environment | Base URL                                      |
+| ----------- | --------------------------------------------- |
+| Production  | `https://itinerary-api.info-cce.workers.dev`  |
+| Local       | `http://localhost:8787` (`npx wrangler dev` in this project, with its own local database) |
+
+Every path starts with `/v1`. Creator keys for production come from the operator.
+
 ## Using these documents from the front-end
 
 The front-end lives beside this project, so it reads these files by relative path rather

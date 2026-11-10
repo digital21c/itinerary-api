@@ -20,7 +20,10 @@ info:
     everything, and a `/problems/…` URI when a client needs to tell problems apart.
 
 servers:
-  - url: /
+  - url: https://itinerary-api.info-cce.workers.dev
+    description: Production (Cloudflare Workers Free, D1)
+  - url: http://localhost:8787
+    description: Local development (`npx wrangler dev`)
 
 security:
   - bearerKey: []

@@ -118,6 +118,11 @@ npm 11 blocks dependency install scripts. `workerd` and `esbuild` need theirs, a
 per version in `package.json` `allowScripts`: after upgrading Wrangler, run
 `npm install-scripts ls` and approve the new versions.
 
+Production is `https://itinerary-api.info-cce.workers.dev` (Workers Free, first deployed
+2026-11-11). To release: `npm run check`, then apply any new migrations with `--remote`
+(and `PRAGMA optimize` if one creates an index), then `npm run deploy`. Never print a
+production key in a shared log or transcript: issue creator keys in your own terminal.
+
 Wrangler commands (database `itinerary`, binding `DB`):
 
 ```bash
