@@ -15,7 +15,7 @@ export default defineConfig(async () => {
       }),
     ],
     test: {
-      include: ["src/**/*.spec.ts"],
+      include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts"],
       setupFiles: ["./vitest.setup.ts"],
     },
   };

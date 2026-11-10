@@ -1,0 +1,12 @@
+{
+  // Admin scripts run in Node (which strips the types itself), not in the Workers runtime.
+  // Their tests run in the Workers runtime like all others, so the root tsconfig checks them.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // Node needs the real file name, including `.ts`, in relative imports.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["."],
+  "exclude": ["**/*.spec.ts"]
+}

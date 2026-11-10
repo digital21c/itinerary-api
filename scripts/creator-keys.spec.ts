@@ -1,0 +1,101 @@
+import { env } from "cloudflare:workers";
+import { describe, expect, it } from "vitest";
+import {
+  insertCreatorKeySql,
+  type NewCreatorKey,
+  parseExpiresAt,
+  parseLabel,
+  sqlBlob,
+  sqlText,
+} from "./creator-keys";
+
+describe("parseLabel", () => {
+  it("trims the label", () => {
+    expect(parseLabel("  my laptop ")).toBe("my laptop");
+  });
+
+  it.each([
+    ["an empty label", ""],
+    ["only whitespace", "   "],
+    ["a label over 100 characters", "a".repeat(101)],
+    ["a newline", "my\nlaptop"],
+    ["a NUL character", "my\u0000laptop"],
+  ])("rejects %s", (_description, raw) => {
+    expect(() => parseLabel(raw)).toThrow();
+  });
+});
+
+describe("parseExpiresAt", () => {
+  const now = new Date("2026-11-10T12:00:00.000Z");
+
+  it.each([
+    ["2027-01-31", "2027-01-31T00:00:00.000Z"],
+    ["2027-01-31T08:30:00Z", "2027-01-31T08:30:00.000Z"],
+    ["2027-01-31T10:30+02:00", "2027-01-31T08:30:00.000Z"],
+  ])("normalises %s to UTC", (raw, expected) => {
+    expect(parseExpiresAt(raw, now)).toBe(expected);
+  });
+
+  it.each([
+    ["no time zone", "2027-01-31T08:30:00"],
+    ["not a date", "next week"],
+    ["an impossible date", "2027-02-30T00:00:00Z"],
+    ["the present", "2026-11-10T12:00:00Z"],
+    ["the past", "2026-01-01"],
+  ])("rejects %s", (_description, raw) => {
+    expect(() => parseExpiresAt(raw, now)).toThrow();
+  });
+});
+
+describe("SQL literals", () => {
+  it("doubles single quotes in text", () => {
+    expect(sqlText("Greg's laptop")).toBe("'Greg''s laptop'");
+  });
+
+  it("writes blobs as hex", () => {
+    expect(sqlBlob(new Uint8Array([0, 15, 255]))).toBe("X'000fff'");
+  });
+});
+
+describe("insertCreatorKeySql", () => {
+  // D1 storage is shared by the tests in one file, so each test inserts its own key.
+  function newKey(fill: number): NewCreatorKey {
+    return {
+      id: crypto.randomUUID(),
+      keyHash: new Uint8Array(32).fill(fill),
+      label: "Robert'); drop table creator_keys; --",
+      createdAt: "2026-11-10T12:00:00.000Z",
+      expiresAt: null,
+    };
+  }
+
+  it("inserts exactly the given values into the real schema", async () => {
+    const key = newKey(1);
+    await env.DB.exec(insertCreatorKeySql(key));
+
+    const row = await env.DB.prepare("select * from creator_keys where id = ?1")
+      .bind(key.id)
+      .first();
+
+    expect(row).toEqual({
+      id: key.id,
+      key_hash: Array.from(key.keyHash),
+      label: key.label,
+      created_at: key.createdAt,
+      last_used_at: null,
+      expires_at: null,
+      revoked_at: null,
+    });
+  });
+
+  it("writes an expiry when there is one", async () => {
+    const expiring = { ...newKey(2), expiresAt: "2027-01-31T00:00:00.000Z" };
+    await env.DB.exec(insertCreatorKeySql(expiring));
+
+    const row = await env.DB.prepare("select expires_at from creator_keys where id = ?1")
+      .bind(expiring.id)
+      .first<{ expires_at: string }>();
+
+    expect(row?.expires_at).toBe("2027-01-31T00:00:00.000Z");
+  });
+});

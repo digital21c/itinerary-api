@@ -88,8 +88,20 @@ npm test               # Vitest once, inside workerd; npm run test:watch to watc
 npm run cf-typegen     # regenerate worker-configuration.d.ts after changing wrangler.jsonc
 ```
 
-Tests apply `migrations/` to a fresh local D1 (`vitest.config.ts` + `vitest.setup.ts`);
-each test file gets isolated storage.
+Tests apply `migrations/` to a fresh local D1 (`vitest.config.ts` + `vitest.setup.ts`).
+Each test file gets isolated storage, but the tests within one file share it: give each
+test its own IDs and keys rather than relying on an empty database.
+
+Admin scripts run directly in Node 26, which strips the TypeScript types itself (no build
+step). They import with explicit `.ts` extensions and are type-checked against Node's types
+by `scripts/tsconfig.json`. Their pure parts are tested like everything else, in workerd.
+
+```bash
+node scripts/issue-creator-key.ts --local --label "my laptop"
+node scripts/issue-creator-key.ts --remote --label "my laptop" --expires-at 2027-12-31
+```
+
+The key is printed once, on stdout alone; Wrangler's output and messages go to stderr.
 
 npm 11 blocks dependency install scripts. `workerd` and `esbuild` need theirs, approved
 per version in `package.json` `allowScripts`: after upgrading Wrangler, run
@@ -217,6 +229,8 @@ Run by hand through `wrangler d1 execute`, adding nothing to the public API:
 
 - Issuing, expiring and revoking creator keys. Nothing sits above them in the API, and the first one
   can't come through the API at all. Generate the key locally and insert only its hash.
+  Issuing is `scripts/issue-creator-key.ts`, which requires a label and an explicit
+  `--local` or `--remote`. Expiring and revoking are not scripted yet.
 - Recovering a document whose manager key is lost, by inserting a replacement key.
 - Purging a document or version for good.
 
