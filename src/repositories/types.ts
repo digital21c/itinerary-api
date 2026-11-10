@@ -83,7 +83,52 @@ export interface DocumentRepository {
   appendVersion(version: NewVersion, maxVersions: number): Promise<"appended" | "stale">;
 }
 
+export interface PublishedVersion {
+  version: number;
+  /** The stored JSON text. */
+  body: string;
+}
+
+/** What a key lookup for the published version found. */
+export interface PublishedLookup {
+  key: DocumentKeyAccess;
+  /** `null` when nothing is published. */
+  published: PublishedVersion | null;
+}
+
+export interface NewPublication {
+  documentId: string;
+  version: number;
+  publishedAt: string;
+  /** The document key that published it. */
+  publishedBy: string;
+}
+
+/** The published version is a setting, like a key: it changes, the versions it points at don't. */
+export interface PublicationRepository {
+  /**
+   * In one query: the active key with this hash on this document, and the published version
+   * with its body. `null` if there is no such key, which also covers a missing document.
+   */
+  findPublished(
+    documentId: string,
+    keyHash: Uint8Array,
+    now: Date,
+  ): Promise<PublishedLookup | null>;
+
+  /**
+   * Publishes the version, replacing any earlier publication, in one statement. Refused
+   * (`"not-publishable"`) if the version doesn't exist, was pruned or is a deletion marker,
+   * or if the document's latest version is a deletion marker.
+   */
+  publish(publication: NewPublication): Promise<"published" | "not-publishable">;
+
+  /** Removes the publication, if there is one. */
+  unpublish(documentId: string): Promise<void>;
+}
+
 export interface Repositories {
   creatorKeys: CreatorKeyRepository;
   documents: DocumentRepository;
+  publications: PublicationRepository;
 }

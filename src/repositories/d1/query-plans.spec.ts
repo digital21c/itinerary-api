@@ -7,6 +7,7 @@ import {
   LATEST_WITH_BODY_SQL,
   PRUNE_VERSIONS_SQL,
 } from "./documents";
+import { FIND_PUBLISHED_SQL, PUBLISH_SQL, UNPUBLISH_SQL } from "./publications";
 
 /**
  * D1 bills rows read, so every frequent query must search an index rather than scan a table.
@@ -27,6 +28,9 @@ describe("query plans", () => {
     ["finding the latest version's head", LATEST_HEAD_SQL, 3],
     ["appending a version", APPEND_VERSION_SQL, 6],
     ["pruning versions", PRUNE_VERSIONS_SQL, 2],
+    ["finding the published version", FIND_PUBLISHED_SQL, 3],
+    ["publishing a version", PUBLISH_SQL, 4],
+    ["unpublishing", UNPUBLISH_SQL, 1],
   ])("%s never scans a table", async (_description, sql, parameterCount) => {
     const plan = await queryPlan(sql, parameterCount);
 

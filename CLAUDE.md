@@ -449,13 +449,28 @@ insert into document_publications (document_id, version, published_at, published
 select ?1, ?2, ?3, ?4
 where exists (select 1 from document_versions
               where document_id = ?1 and version = ?2 and deleted = 0)
+  and not exists (select 1 from document_versions          -- latest isn't a deletion marker
+                  where document_id = ?1 and deleted = 1
+                    and version = (select max(version) from document_versions
+                                   where document_id = ?1))
 on conflict (document_id) do update set
   version = excluded.version,
   published_at = excluded.published_at,
   published_by = excluded.published_by;
 ```
 
+- `PUT …/published` takes `{ "version": n }` (exactly that, at most 1,000 bytes) → `204`.
+  Order: key (`401`/`403`), deleted document (`410`), body (`415`/`413`/`400`/`422`), then
+  the statement above.
 - Zero rows changed → `422` (the version doesn't exist, was pruned or is a deletion marker).
+- The `not exists` clause stops a publish that races a delete from making a deleted
+  document readable again; in that rare race the answer is `422` rather than `410`.
+- Publishing needs no `If-Match`, the one exception to "writes require `If-Match`" (decided
+  in build step 5): it states the whole intended result, so there is nothing to overwrite.
+  It is idempotent, and if two editors publish at once the later one wins.
+- `GET …/published` takes any document key; a valid key with nothing published → `404`.
+  `ETag` is the published version, so saving drafts doesn't disturb travellers' `304`s.
+- `DELETE …/published` (editor or manager) → `204`, even if nothing was published.
 - The publication is a mutable setting, like a key. Version content stays immutable.
 - Reverting = publishing an earlier retained version. Unpublishing removes the row.
 - `DELETE` on a document removes its publication in the same batch as the deletion marker,
@@ -539,7 +554,8 @@ DELETE  /v1/documents/{id}/keys/{keyId}  revoke → 204
 - Every `401` is the same response, with `WWW-Authenticate: Bearer`.
 - CORS allows any origin (`*`) without credentials: with bearer keys and no cookies it
   protects nothing. Exposed headers: `ETag`, `Location`.
-- Writes require `If-Match`. Missing → `428 Precondition Required`. Stale → `412`.
+- Writes to content require `If-Match`. Missing → `428 Precondition Required`. Stale → `412`.
+  Settings that state the whole intended result (publishing) don't.
   `If-Match` must be exactly one strong tag such as `"3"`; `*`, lists and weak tags → `400`
   (stricter than RFC 9110, because "save over the version I edited" names one version).
 - Order of checks on a write: key (`401`/`403`), preconditions (`428`/`400`/`410`/`412`),
@@ -650,12 +666,12 @@ design of a step before starting it if it adds an endpoint, a folder or a depend
    app, CORS, and the start of `openapi.yaml`.
 4. **Save a version:** `GET /v1/documents/{id}` (latest, with `ETag`) and
    `POST /v1/documents/{id}/versions` with `If-Match`, the conflict check and pruning.
-5. **Publish and read:** `PUT …/published` and `GET …/published`, completing the first full
-   traveller path.
+5. **Publish and read:** `PUT …/published`, `GET …/published` and (moved forward from
+   step 7) `DELETE …/published`, completing the first full traveller path.
 6. **Keys:** list, issue, change expiry, revoke. Also start updating document keys'
    `last_used_at` (at most hourly), which the key list shows; deferred from step 4.
-7. **The rest:** history, one version, `PATCH` (merge patch), `DELETE` a document,
-   unpublish.
+7. **The rest:** history, one version, `PATCH` (merge patch), `DELETE` a document. Needs
+   Open Decision 5 first.
 
 # Open Decisions
 
@@ -673,6 +689,10 @@ Ask before building anything that depends on these.
    this, and should avoid open-ended text (see Data Protection).
 4. **Smaller API details:** the history cursor format and page size. (CORS, problem `type`s
    and `creator_keys.last_used_at`, set on every create, were settled in build step 3.)
+5. **Restoring deleted documents:** this file says both "deleted documents never get another
+   write" (enforced: saves on a deleted document get `410`) and "restoring a document doesn't
+   republish it", which implies undeleting. Decide before step 7 whether a deleted document
+   can be restored, or deletion is final until the purge.
 
 Settled on 2026-11-10 (now recorded above): npm, `@cloudflare/vitest-plugin`, ESLint
 + Prettier, Zod, spec-first OpenAPI, the limits table (200 KB documents), `410` for deleted

@@ -2,7 +2,6 @@
  * The API's error responses, so each status has one wording everywhere. `401` lives in
  * `auth/bearer.ts`, because it must be identical whatever went wrong.
  */
-import { MAX_DOCUMENT_BYTES } from "../models/limits";
 import { problemResponse } from "../utils/problem";
 
 export function forbidden(): Response {
@@ -49,11 +48,11 @@ export function unsupportedMediaType(): Response {
   });
 }
 
-export function contentTooLarge(): Response {
+export function contentTooLarge(maxBytes: number): Response {
   return problemResponse({
     status: 413,
     title: "Content Too Large",
-    detail: `A document can be at most ${String(MAX_DOCUMENT_BYTES)} bytes.`,
+    detail: `The body can be at most ${String(maxBytes)} bytes.`,
   });
 }
 
@@ -61,10 +60,20 @@ export function badRequest(detail: string): Response {
   return problemResponse({ status: 400, title: "Bad Request", detail });
 }
 
-export function notAnObject(): Response {
+export function unprocessable(detail: string): Response {
+  return problemResponse({ status: 422, title: "Unprocessable Content", detail });
+}
+
+export function nothingPublished(): Response {
   return problemResponse({
-    status: 422,
-    title: "Unprocessable Content",
-    detail: "A document must be a JSON object.",
+    status: 404,
+    title: "Not Found",
+    detail: "No version of this document is published.",
   });
+}
+
+export function notPublishable(): Response {
+  return unprocessable(
+    "That version can't be published: it doesn't exist, was pruned, or the document was deleted.",
+  );
 }

@@ -7,18 +7,3 @@ import { z } from "zod";
 export const documentBodySchema = z.record(z.string(), z.unknown());
 
 export type DocumentBody = z.infer<typeof documentBodySchema>;
-
-export type ParsedDocumentBody =
-  { ok: true; body: DocumentBody } | { ok: false; reason: "invalid-json" | "not-an-object" };
-
-export function parseDocumentBody(text: string): ParsedDocumentBody {
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: "invalid-json" };
-  }
-
-  const result = documentBodySchema.safeParse(json);
-  return result.success ? { ok: true, body: result.data } : { ok: false, reason: "not-an-object" };
-}

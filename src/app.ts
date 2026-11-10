@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import type { AppEnv } from "./app-env";
 import type { Repositories } from "./repositories/types";
 import { documentRoutes } from "./routes/documents";
+import { publicationRoutes } from "./routes/publications";
 import { problemResponse } from "./utils/problem";
 
 /**
@@ -30,6 +31,7 @@ export function createApp(getRepositories: (env: Env) => Repositories): Hono<App
   });
 
   app.route("/v1/documents", documentRoutes);
+  app.route("/v1/documents", publicationRoutes);
 
   app.notFound(() => problemResponse({ status: 404, title: "Not Found" }));
 

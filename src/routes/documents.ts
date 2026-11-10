@@ -2,15 +2,13 @@ import { Hono } from "hono";
 import type { AppEnv } from "../app-env";
 import { unauthorized } from "../auth/bearer";
 import { requireCreatorKey } from "../auth/creator-key";
-import { documentKeyFrom } from "../auth/document-key";
-import { hashKey } from "../auth/keys";
+import { lookUpWithDocumentKey } from "../auth/document-key";
 import { MAX_DOCUMENTS_PER_CREATOR_KEY, MAX_VERSIONS } from "../models/limits";
 import { planNewDocument } from "../models/new-document";
 import { allows } from "../models/permissions";
 import { nextVersion, parseVersionNumber } from "../models/versions";
-import { noneMatchMatches, singleStrongTag, strongTag } from "../utils/entity-tags";
+import { singleStrongTag, strongTag } from "../utils/entity-tags";
 import { problemResponse } from "../utils/problem";
-import { isUuid } from "../utils/uuid";
 import { readDocumentBody } from "./document-body";
 import {
   documentGone,
@@ -19,6 +17,7 @@ import {
   preconditionFailed,
   preconditionRequired,
 } from "./problems";
+import { versionResponse } from "./version-response";
 
 /** Routes under /v1/documents. */
 export const documentRoutes = new Hono<AppEnv>();
@@ -41,7 +40,7 @@ documentRoutes.post("/", requireCreatorKey, async (c) => {
   }
 
   const { document, issuedKeys } = await planNewDocument({
-    body: read.body,
+    body: read.value,
     creatorKeyId: creatorKey.id,
     now: new Date(),
   });
@@ -57,17 +56,11 @@ documentRoutes.post("/", requireCreatorKey, async (c) => {
 
 /** The latest working version. Requires an editor or manager key. */
 documentRoutes.get("/:id", async (c) => {
-  const documentId = c.req.param("id");
-  const key = documentKeyFrom(c.req.header("Authorization"));
-  // An ID that can't exist gets the same 401 as one that doesn't, without a query.
-  if (key === null || !isUuid(documentId)) {
-    return unauthorized();
-  }
-
-  const found = await c.var.repositories.documents.findLatest(
-    documentId,
-    await hashKey(key),
-    new Date(),
+  const documents = c.var.repositories.documents;
+  const found = await lookUpWithDocumentKey(
+    c.req.param("id"),
+    c.req.header("Authorization"),
+    (documentId, keyHash, now) => documents.findLatest(documentId, keyHash, now),
   );
   if (found === null) {
     return unauthorized();
@@ -79,31 +72,17 @@ documentRoutes.get("/:id", async (c) => {
   if (found.latest.deleted || body === null) {
     return documentGone();
   }
-
-  // The client may keep a copy, but must revalidate it (If-None-Match) before reusing it.
-  const headers = { ETag: strongTag(String(version)), "Cache-Control": "private, no-cache" };
-  if (noneMatchMatches(c.req.header("If-None-Match"), String(version))) {
-    return new Response(null, { status: 304, headers });
-  }
-  // Sent exactly as stored, so a read never parses JSON.
-  return new Response(body, {
-    status: 200,
-    headers: { ...headers, "Content-Type": "application/json" },
-  });
+  return versionResponse(version, body, c.req.header("If-None-Match"));
 });
 
 /** Save a new full version. Requires an editor or manager key and If-Match. */
 documentRoutes.post("/:id/versions", async (c) => {
   const documentId = c.req.param("id");
-  const key = documentKeyFrom(c.req.header("Authorization"));
-  if (key === null || !isUuid(documentId)) {
-    return unauthorized();
-  }
-
-  const found = await c.var.repositories.documents.findLatestHead(
+  const documents = c.var.repositories.documents;
+  const found = await lookUpWithDocumentKey(
     documentId,
-    await hashKey(key),
-    new Date(),
+    c.req.header("Authorization"),
+    (id, keyHash, now) => documents.findLatestHead(id, keyHash, now),
   );
   if (found === null) {
     return unauthorized();
@@ -137,12 +116,12 @@ documentRoutes.post("/:id/versions", async (c) => {
   }
 
   const newVersion = nextVersion(baseVersion);
-  const outcome = await c.var.repositories.documents.appendVersion(
+  const outcome = await documents.appendVersion(
     {
       documentId,
       baseVersion,
       newVersion,
-      body: JSON.stringify(read.body),
+      body: JSON.stringify(read.value),
       createdAt: new Date().toISOString(),
       createdBy: found.key.keyId,
     },

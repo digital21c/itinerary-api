@@ -75,3 +75,139 @@ export function jsonObjectOfSize(bytes: number): string {
   const wrapper = '{"padding":""}';
   return `{"padding":"${"x".repeat(bytes - wrapper.length)}"}`;
 }
+
+export function getLatest(
+  documentId: string,
+  key: string | null,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return request(`/v1/documents/${documentId}`, { headers: { ...authorization(key), ...headers } });
+}
+
+export function getPublished(
+  documentId: string,
+  key: string | null,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return request(`/v1/documents/${documentId}/published`, {
+    headers: { ...authorization(key), ...headers },
+  });
+}
+
+/** `PUT …/published` with `{ "version": version }`, or with `body` as given. */
+export function publish(
+  documentId: string,
+  key: string,
+  version: number,
+  body: BodyInit = JSON.stringify({ version }),
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return request(`/v1/documents/${documentId}/published`, {
+    method: "PUT",
+    body,
+    headers: { ...withKey(key), ...headers },
+  });
+}
+
+export function unpublish(documentId: string, key: string | null): Promise<Response> {
+  return request(`/v1/documents/${documentId}/published`, {
+    method: "DELETE",
+    headers: authorization(key),
+  });
+}
+
+function authorization(key: string | null): Record<string, string> {
+  return key === null ? {} : { Authorization: `Bearer ${key}` };
+}
+
+export function saveVersion(
+  documentId: string,
+  key: string,
+  ifMatch: string | null,
+  body: BodyInit = '{"title":"Edited"}',
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  const precondition: Record<string, string> = ifMatch === null ? {} : { "If-Match": ifMatch };
+  return request(`/v1/documents/${documentId}/versions`, {
+    method: "POST",
+    body,
+    headers: { ...withKey(key), ...precondition, ...headers },
+  });
+}
+
+/** Saves `count` versions in turn, each over the previous one. */
+export async function saveVersions(document: CreatedDocument, count: number): Promise<void> {
+  for (let base = 1; base <= count; base++) {
+    const response = await saveVersion(
+      document.id,
+      document.editorKey,
+      `"${String(base)}"`,
+      JSON.stringify({ title: `Version ${String(base + 1)}` }),
+    );
+    expect(response.status).toBe(201);
+  }
+}
+
+export async function storedVersions(documentId: string): Promise<number[]> {
+  const { results } = await env.DB.prepare(
+    "select version from document_versions where document_id = ?1 order by version",
+  )
+    .bind(documentId)
+    .all<{ version: number }>();
+  return results.map((row) => row.version);
+}
+
+/** Inserts a deletion marker directly, until DELETE exists (build step 7). */
+export async function markDeleted(documentId: string, version: number): Promise<void> {
+  await env.DB.prepare(
+    `insert into document_versions (document_id, version, body, deleted, created_at)
+     values (?1, ?2, null, 1, ?3)`,
+  )
+    .bind(documentId, version, new Date().toISOString())
+    .run();
+}
+
+export async function setKeyColumn(
+  key: string,
+  column: "revoked_at" | "expires_at",
+  value: string,
+) {
+  await env.DB.prepare(`update document_keys set ${column} = ?1 where key_hash = ?2`)
+    .bind(value, await hashKey(key))
+    .run();
+}
+
+/** Each way a request can fail authentication, given a document and another document. */
+export async function authenticationFailures(
+  document: CreatedDocument,
+  other: CreatedDocument,
+): Promise<[string, string, string | null][]> {
+  const revoked = (await createDocument()).editorKey;
+  const expired = (await createDocument()).editorKey;
+  await setKeyColumn(revoked, "revoked_at", "2026-01-01T00:00:00.000Z");
+  await setKeyColumn(expired, "expires_at", "2026-01-01T00:00:00.000Z");
+  const revokedOn = await documentOfKey(revoked);
+  const expiredOn = await documentOfKey(expired);
+
+  return [
+    ["no key", document.id, null],
+    ["a malformed key", document.id, "ek_short"],
+    ["a creator key", document.id, (await insertCreatorKey()).key],
+    ["an editor key that was never issued", document.id, generateKey("editor")],
+    ["another document's manager key", document.id, other.managerKey],
+    ["a document that doesn't exist", crypto.randomUUID(), document.editorKey],
+    ["an ID that isn't a UUID", "not-a-uuid", document.editorKey],
+    ["a revoked editor key", revokedOn, revoked],
+    ["an expired editor key", expiredOn, expired],
+  ];
+}
+
+export async function documentOfKey(key: string): Promise<string> {
+  const row = await env.DB.prepare("select document_id from document_keys where key_hash = ?1")
+    .bind(await hashKey(key))
+    .first<{ document_id: string }>();
+  if (row === null) {
+    throw new Error("The key isn't stored.");
+  }
+  return row.document_id;
+}

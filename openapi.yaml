@@ -206,6 +206,110 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/documents/{id}/published:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      operationId: getPublishedVersion
+      summary: Read the published version (what travellers see)
+      description: |
+        Any document key: reader, editor or manager. Returns the published version exactly as
+        stored. Saving a new version doesn't change it; publishing does.
+
+        Travellers' links carry the reader key in the URL fragment (`/doc/{id}#rk_…`), which
+        never reaches the server; the client moves it into `Authorization`.
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          description: |
+            A version you already have, such as `"3"`. If it is still the published one, the
+            response is `304` with no body. Weak tags, `*` and lists are accepted.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The published version.
+          headers:
+            ETag:
+              $ref: "#/components/headers/VersionETag"
+            Cache-Control:
+              description: Always `private, no-cache`; revalidate with `If-None-Match`.
+              schema:
+                type: string
+                const: private, no-cache
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentBody"
+        "304":
+          description: Not modified. The version in `If-None-Match` is still the published one.
+          headers:
+            ETag:
+              $ref: "#/components/headers/VersionETag"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Nothing is published, or the document was deleted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    put:
+      operationId: publishVersion
+      summary: Publish a version
+      description: |
+        Editor or manager. Makes exactly this version what travellers see, replacing any
+        earlier publication. Publishing an earlier retained version reverts to it.
+
+        Idempotent, and needs no `If-Match`: the request states the whole intended result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRequest"
+      responses:
+        "204":
+          description: Published.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/DocumentGone"
+        "413":
+          description: The body is over 1,000 bytes.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          description: |
+            The body isn't exactly `{ "version": <positive integer> }`, or that version can't be
+            published: it doesn't exist, was pruned, or is a deletion marker.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    delete:
+      operationId: unpublish
+      summary: Unpublish
+      description: |
+        Editor or manager. Afterwards readers get `404`. Idempotent: `204` even if nothing was
+        published.
+      responses:
+        "204":
+          description: Nothing is published now.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
 components:
   parameters:
     DocumentId:
@@ -238,6 +342,16 @@ components:
         traveller names, contact, passport or payment details.
       type: object
       additionalProperties: true
+
+    PublishRequest:
+      type: object
+      required: [version]
+      additionalProperties: false
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: The version to publish.
 
     CreatedDocument:
       type: object

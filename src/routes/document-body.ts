@@ -1,35 +1,12 @@
-import { type DocumentBody, parseDocumentBody } from "../models/document-body";
+import { type DocumentBody, documentBodySchema } from "../models/document-body";
 import { MAX_DOCUMENT_BYTES } from "../models/limits";
-import { isJsonMediaType, readBodyText } from "../utils/request-body";
-import { badRequest, contentTooLarge, notAnObject, unsupportedMediaType } from "./problems";
+import { type JsonBody, readJsonBody } from "./json-body";
 
-/**
- * Reads a document from the request, with every body check in order: `415` unless JSON,
- * `413` over the size limit, `400` for invalid UTF-8 or JSON, `422` unless a JSON object.
- */
-export async function readDocumentBody(
-  request: Request,
-): Promise<{ ok: true; body: DocumentBody } | { ok: false; response: Response }> {
-  if (!isJsonMediaType(request.headers.get("Content-Type") ?? undefined)) {
-    return { ok: false, response: unsupportedMediaType() };
-  }
-
-  const text = await readBodyText(request, MAX_DOCUMENT_BYTES);
-  if (!text.ok) {
-    return {
-      ok: false,
-      response:
-        text.reason === "too-large" ? contentTooLarge() : badRequest("The body isn't UTF-8."),
-    };
-  }
-
-  const parsed = parseDocumentBody(text.text);
-  if (!parsed.ok) {
-    return {
-      ok: false,
-      response:
-        parsed.reason === "invalid-json" ? badRequest("The body isn't JSON.") : notAnObject(),
-    };
-  }
-  return { ok: true, body: parsed.body };
+/** Reads a document from the request: `415`, `413`, `400`, or `422` unless a JSON object. */
+export function readDocumentBody(request: Request): Promise<JsonBody<DocumentBody>> {
+  return readJsonBody(request, {
+    maxBytes: MAX_DOCUMENT_BYTES,
+    schema: documentBodySchema,
+    invalidDetail: "A document must be a JSON object.",
+  });
 }
