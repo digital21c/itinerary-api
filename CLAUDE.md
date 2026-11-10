@@ -217,9 +217,14 @@ where id = ?2 and document_id = ?3;
   ignores expired keys, so an expired key gets the same `401` as an unknown one.
 - **Manager keys never expire** (enforced by a check constraint). Otherwise a document could
   silently lose its last working manager key. Leavers are handled by revocation.
-- A manager sets expiry when issuing a key or later with `PATCH`, which must be in the future
-  (`422`). Keys start with no expiry, so the client sets the shared reader key's expiry
-  after creating the trip, some time after it ends.
+- Expiry is given as a calendar date, `YYYY-MM-DD`, everywhere (API and admin scripts;
+  decided 2026-11-10). It is read in UTC and the key works through the whole of that day,
+  so `expires_at` stores the first instant of the next day: `2027-12-31` is stored as
+  `2028-01-01T00:00:00.000Z`. Responses give the date back as `YYYY-MM-DD`. The rule lives
+  in `src/models/expiry.ts`.
+- A manager sets expiry when issuing a key or later with `PATCH`, which can't be in the past
+  (`422`); today's date is allowed. Keys start with no expiry, so the client sets the shared
+  reader key's expiry after creating the trip, some time after it ends.
 - Extending a key reactivates it if it has expired, so trip dates can change without
   re-sending the travellers' link. A revoked key can never be reactivated.
 
@@ -495,7 +500,7 @@ PATCH   /v1/documents/{id}               JSON Merge Patch (RFC 7396) on latest; 
 DELETE  /v1/documents/{id}               inserts a deletion-marker version
 GET     /v1/documents/{id}/keys          list: id, permission, label, dates; never the key or hash
 POST    /v1/documents/{id}/keys          issue → 201 { id, key, permission, label, expiresAt } (shown once)
-PATCH   /v1/documents/{id}/keys/{keyId}  change expiry: { "expiresAt": … or null } → 204
+PATCH   /v1/documents/{id}/keys/{keyId}  change expiry: { "expiresAt": "YYYY-MM-DD" or null } → 204
 DELETE  /v1/documents/{id}/keys/{keyId}  revoke → 204
 ```
 

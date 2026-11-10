@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   insertCreatorKeySql,
   type NewCreatorKey,
-  parseExpiresAt,
+  parseExpiryDate,
   parseLabel,
   sqlBlob,
   sqlText,
@@ -25,25 +25,24 @@ describe("parseLabel", () => {
   });
 });
 
-describe("parseExpiresAt", () => {
+// The date rule itself is tested in src/models/expiry.spec.ts.
+describe("parseExpiryDate", () => {
   const now = new Date("2026-11-10T12:00:00.000Z");
 
-  it.each([
-    ["2027-01-31", "2027-01-31T00:00:00.000Z"],
-    ["2027-01-31T08:30:00Z", "2027-01-31T08:30:00.000Z"],
-    ["2027-01-31T10:30+02:00", "2027-01-31T08:30:00.000Z"],
-  ])("normalises %s to UTC", (raw, expected) => {
-    expect(parseExpiresAt(raw, now)).toBe(expected);
+  it("stores a date as the end of that day, UTC", () => {
+    expect(parseExpiryDate("2027-01-31", now)).toBe("2027-02-01T00:00:00.000Z");
+  });
+
+  it("accepts today", () => {
+    expect(parseExpiryDate("2026-11-10", now)).toBe("2026-11-11T00:00:00.000Z");
   });
 
   it.each([
-    ["no time zone", "2027-01-31T08:30:00"],
-    ["not a date", "next week"],
-    ["an impossible date", "2027-02-30T00:00:00Z"],
-    ["the present", "2026-11-10T12:00:00Z"],
-    ["the past", "2026-01-01"],
+    ["a date and time", "2027-01-31T08:30:00Z"],
+    ["an impossible date", "2027-02-30"],
+    ["the past", "2026-11-09"],
   ])("rejects %s", (_description, raw) => {
-    expect(() => parseExpiresAt(raw, now)).toThrow();
+    expect(() => parseExpiryDate(raw, now)).toThrow();
   });
 });
 

@@ -2,6 +2,7 @@
  * Pure helpers for the creator-key admin scripts: input checks and SQL building.
  * No Node or Wrangler here, so they can be unit tested.
  */
+import { expiresAtFromDate, isFutureExpiry } from "../src/models/expiry.ts";
 
 export interface NewCreatorKey {
   id: string;
@@ -12,9 +13,6 @@ export interface NewCreatorKey {
 }
 
 const MAX_LABEL_LENGTH = 100;
-
-/** A date, or a date and time with `Z` or an offset, so the time zone is never guessed. */
-const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;
 
 export function parseLabel(raw: string): string {
   const label = raw.trim();
@@ -27,26 +25,16 @@ export function parseLabel(raw: string): string {
   return label;
 }
 
-/** Normalised with `toISOString()`, so the API's string comparisons order it correctly. */
-export function parseExpiresAt(raw: string, now: Date): string {
-  const expiresAt = new Date(raw);
-  if (!ISO_8601.test(raw) || Number.isNaN(expiresAt.getTime()) || !isCalendarDate(raw)) {
-    throw new Error(`The expiry must be an ISO-8601 date, such as 2027-01-31T00:00:00Z.`);
+/** The stored `expires_at` for an expiry date (YYYY-MM-DD, UTC), using the API's own rule. */
+export function parseExpiryDate(raw: string, now: Date): string {
+  const expiresAt = expiresAtFromDate(raw);
+  if (expiresAt === null) {
+    throw new Error("The expiry must be a date in the form YYYY-MM-DD, such as 2027-12-31.");
   }
-  if (expiresAt.getTime() <= now.getTime()) {
-    throw new Error("The expiry must be in the future.");
+  if (!isFutureExpiry(expiresAt, now)) {
+    throw new Error("The expiry date can't be in the past.");
   }
-  return expiresAt.toISOString();
-}
-
-/** `Date` rolls 2027-02-30 over to 2 March instead of rejecting it, so check the day exists. */
-function isCalendarDate(raw: string): boolean {
-  const [year, month, day] = raw.slice(0, 10).split("-").map(Number);
-  if (year === undefined || month === undefined || day === undefined) {
-    return false;
-  }
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  return expiresAt;
 }
 
 /**

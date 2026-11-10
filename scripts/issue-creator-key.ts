@@ -5,18 +5,20 @@
  *   node scripts/issue-creator-key.ts --local --label "my laptop"
  *   node scripts/issue-creator-key.ts --remote --label "my laptop" --expires-at 2027-12-31
  *
+ * With --expires-at, the key works through the whole of that date (UTC).
+ *
  * The key goes to stdout and everything else to stderr, so it can be piped straight into a
  * password manager. Never paste it into a file in the repository.
  */
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { generateKey, hashKey } from "../src/auth/keys.ts";
-import { insertCreatorKeySql, parseExpiresAt, parseLabel } from "./creator-keys.ts";
+import { insertCreatorKeySql, parseExpiryDate, parseLabel } from "./creator-keys.ts";
 
 const DATABASE_NAME = "itinerary";
 
 const USAGE =
-  "Usage: node scripts/issue-creator-key.ts (--local | --remote) --label <text> [--expires-at <ISO-8601>]";
+  "Usage: node scripts/issue-creator-key.ts (--local | --remote) --label <text> [--expires-at <YYYY-MM-DD>]";
 
 interface Options {
   target: "--local" | "--remote";
@@ -47,7 +49,7 @@ function readOptions(now: Date): Options {
   return {
     target: values.remote ? "--remote" : "--local",
     label: parseLabel(values.label),
-    expiresAt: rawExpiresAt === undefined ? null : parseExpiresAt(rawExpiresAt, now),
+    expiresAt: rawExpiresAt === undefined ? null : parseExpiryDate(rawExpiresAt, now),
   };
 }
 

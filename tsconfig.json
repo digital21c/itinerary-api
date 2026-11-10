@@ -12,6 +12,9 @@
     "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    // Node runs the admin scripts directly and needs the real file name, including `.ts`, in
+    // relative imports. Code those scripts share with the Worker must use it too.
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "noEmit": true
   },
