@@ -10,7 +10,15 @@ export interface NewDocumentKey {
   id: string;
   permission: Permission;
   keyHash: Uint8Array;
+  label: string;
 }
+
+/** Labels for the three keys every trip starts with, so the key list is readable at once. */
+export const INITIAL_KEY_LABELS: Readonly<Record<Permission, string>> = {
+  manager: "Initial manager key",
+  editor: "Initial editor key",
+  reader: "Initial reader key",
+};
 
 /** What gets stored for a new document. Holds key hashes only, never the keys themselves. */
 export interface NewDocument {
@@ -53,6 +61,7 @@ export async function planNewDocument(input: {
       id: crypto.randomUUID(),
       permission,
       keyHash: await hashKey(key),
+      label: INITIAL_KEY_LABELS[permission],
     })),
   );
 

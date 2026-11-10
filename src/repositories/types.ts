@@ -19,6 +19,13 @@ export interface CreatorKeyRepository {
 export interface DocumentKeyAccess {
   keyId: string;
   permission: Permission;
+  /** Approximate: updated at most hourly. */
+  lastUsedAt: string | null;
+}
+
+/** Every successful document-key lookup has the key it authenticated. */
+export interface AuthenticatedLookup {
+  key: DocumentKeyAccess;
 }
 
 export interface VersionHead {
@@ -33,8 +40,7 @@ export interface VersionWithBody extends VersionHead {
 }
 
 /** What a key lookup on a document found: the key, and the document's latest version. */
-export interface LatestLookup<V extends VersionHead> {
-  key: DocumentKeyAccess;
+export interface LatestLookup<V extends VersionHead> extends AuthenticatedLookup {
   latest: V;
 }
 
@@ -90,8 +96,7 @@ export interface PublishedVersion {
 }
 
 /** What a key lookup for the published version found. */
-export interface PublishedLookup {
-  key: DocumentKeyAccess;
+export interface PublishedLookup extends AuthenticatedLookup {
   /** `null` when nothing is published. */
   published: PublishedVersion | null;
 }
@@ -131,4 +136,82 @@ export interface Repositories {
   creatorKeys: CreatorKeyRepository;
   documents: DocumentRepository;
   publications: PublicationRepository;
+  keys: KeyRepository;
+}
+
+/** A document key's stored record, as a manager sees it. Never the key or its hash. */
+export interface StoredKey {
+  id: string;
+  permission: Permission;
+  label: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  /** The stored instant, the first one at which the key no longer works. */
+  expiresAt: string | null;
+  revokedAt: string | null;
+}
+
+/** What a lookup for a key-management request found: the requesting key, and its target. */
+export interface KeyTargetLookup extends AuthenticatedLookup {
+  /** `null` if there is no key with that ID on this document. */
+  target: StoredKey | null;
+}
+
+export interface IssuedDocumentKey {
+  documentId: string;
+  id: string;
+  keyHash: Uint8Array;
+  permission: Permission;
+  label: string;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
+/**
+ * Every write here also checks, in the same statement, that the requesting key is still
+ * active. Two managers revoking each other at once would otherwise leave a document with no
+ * working manager key; with the check, the second write finds its own key revoked.
+ * `"requester-inactive"` means that happened (answer `401`).
+ */
+export interface KeyRepository {
+  /** All the document's keys, revoked and expired ones included, oldest first. */
+  list(documentId: string): Promise<StoredKey[]>;
+
+  /**
+   * In one query: the active key with this hash on this document, and the key with
+   * `targetId` on the same document. `null` if there is no such active key (`401`).
+   */
+  findWithTarget(
+    documentId: string,
+    keyHash: Uint8Array,
+    targetId: string,
+    now: Date,
+  ): Promise<KeyTargetLookup | null>;
+
+  /** Adds the key unless the document already has `maxKeys` unrevoked keys. */
+  issue(
+    key: IssuedDocumentKey,
+    requesterId: string,
+    maxKeys: number,
+  ): Promise<"issued" | "limit-reached" | "requester-inactive">;
+
+  /** Sets or (with `null`) removes the expiry of an unrevoked, non-manager key. */
+  setExpiry(change: {
+    documentId: string;
+    targetId: string;
+    expiresAt: string | null;
+    requesterId: string;
+    now: Date;
+  }): Promise<"updated" | "target-revoked" | "requester-inactive">;
+
+  /** Revokes another key on the document; repeating it keeps the original time. */
+  revoke(revocation: {
+    documentId: string;
+    targetId: string;
+    requesterId: string;
+    now: Date;
+  }): Promise<"revoked" | "requester-inactive">;
+
+  /** Records that the key was used, unless that was recorded within the last hour. */
+  touch(keyId: string, now: Date): Promise<void>;
 }

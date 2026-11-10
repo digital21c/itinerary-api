@@ -61,6 +61,7 @@ documentRoutes.get("/:id", async (c) => {
     c.req.param("id"),
     c.req.header("Authorization"),
     (documentId, keyHash, now) => documents.findLatest(documentId, keyHash, now),
+    c.var.repositories.keys,
   );
   if (found === null) {
     return unauthorized();
@@ -83,6 +84,7 @@ documentRoutes.post("/:id/versions", async (c) => {
     documentId,
     c.req.header("Authorization"),
     (id, keyHash, now) => documents.findLatestHead(id, keyHash, now),
+    c.var.repositories.keys,
   );
   if (found === null) {
     return unauthorized();

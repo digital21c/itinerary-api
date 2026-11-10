@@ -14,7 +14,7 @@ import { logQueryCost } from "./query-cost";
  * rows however long the history is. `{columns}` is either with or without the body.
  */
 const LATEST_LOOKUP = `
-  select k.id as key_id, k.permission, v.version, v.deleted{columns}
+  select k.id as key_id, k.permission, k.last_used_at, v.version, v.deleted{columns}
   from document_keys k
   join document_versions v
     on v.document_id = k.document_id
@@ -44,6 +44,7 @@ export const PRUNE_VERSIONS_SQL = `
 interface LatestLookupRow {
   key_id: string;
   permission: Permission;
+  last_used_at: string | null;
   version: number;
   deleted: number;
   body?: string | null;
@@ -71,10 +72,10 @@ export class D1DocumentRepository implements DocumentRepository {
       ...keys.map((key) =>
         this.db
           .prepare(
-            `insert into document_keys (id, document_id, key_hash, permission, created_at)
-             values (?1, ?2, ?3, ?4, ?5)`,
+            `insert into document_keys (id, document_id, key_hash, permission, label, created_at)
+             values (?1, ?2, ?3, ?4, ?5, ?6)`,
           )
-          .bind(key.id, id, key.keyHash, key.permission, createdAt),
+          .bind(key.id, id, key.keyHash, key.permission, key.label, createdAt),
       ),
       this.db
         .prepare(`update creator_keys set last_used_at = ?1 where id = ?2`)
@@ -143,7 +144,7 @@ export class D1DocumentRepository implements DocumentRepository {
 }
 
 function keyOf(row: LatestLookupRow): LatestLookup<VersionHead>["key"] {
-  return { keyId: row.key_id, permission: row.permission };
+  return { keyId: row.key_id, permission: row.permission, lastUsedAt: row.last_used_at };
 }
 
 function headOf(row: LatestLookupRow): VersionHead {

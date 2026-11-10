@@ -15,7 +15,8 @@ src/
   app.ts         createApp(getRepositories): CORS, repositories per request, routes, errors
   app-env.ts     Hono's typing for bindings and per-request variables
   routes/        HTTP handlers: parse, validate, authenticate, call the domain, map to responses
-  models/        Domain types, validation schemas, pure rules (permissions, versions, expiry, limits)
+  models/        Domain types, validation schemas, pure rules (permissions, versions, expiry,
+                 limits, labels, key status and requests)
   repositories/  Interfaces (types.ts) and the D1 implementation (d1/); the only code with SQL
   auth/          Key generation, hashing, bearer parsing, key lookups
   utils/         Generic helpers with no domain knowledge (Problem Details, entity tags, body reading)
@@ -46,6 +47,9 @@ docs/            This file and the other design documents
 - `creator-key.ts`: middleware for `POST /v1/documents`.
 - `document-key.ts`: `lookUpWithDocumentKey` reads a document key, refuses an ID that isn't a
   UUID without a query, and runs a repository lookup that authenticates the key; `null` = `401`.
+  When the key authenticates and its `last_used_at` is due (`isLastUsedDue` in
+  `models/keys.ts`: missing or over an hour old), it awaits `keys.touch`. Inline rather than
+  `waitUntil`, which `app.request()` tests don't provide; it is one write per key per hour.
 
 ## Storage conventions (SQLite)
 
@@ -81,6 +85,12 @@ Points worth knowing:
   `src/repositories/d1/query-plans.spec.ts` runs `EXPLAIN QUERY PLAN` on each frequent
   query and fails on a table `SCAN`. Export every frequent query's SQL as a constant and
   add it there.
+- One allowed exception: inserting into `document_keys` plans `SCAN document_versions` and
+  `SCAN document_publications`. These are SQLite's foreign-key checks on tables whose
+  unindexed columns (`created_by`, `published_by`) point at `document_keys`; they only run
+  while foreign-key violations are pending, which never happens with immediate constraints.
+  `repositories/d1/keys.spec.ts` measures `rows_read` with many rows in both tables to prove
+  they don't run. (The same applies to the three key inserts in the create batch.)
 - Primary keys and `unique` columns are indexed automatically. Foreign keys are not.
 - Each index adds a written row whenever a write touches the indexed column, and writes are
   the tighter daily limit. Only add an index for a query that runs often.
@@ -102,6 +112,10 @@ Points worth knowing:
     published still returns a row (→ `404`, not `401`).
   - `FIND_ACTIVE_CREATOR_KEY_SQL` (`creator-keys.ts`): also counts the key's documents for
     the cap, through `documents_created_by`.
+  - `FIND_WITH_TARGET_SQL` (`keys.ts`): the requesting key and, by left join on the *same
+    document*, the target key of a `PATCH` or `DELETE …/keys/{keyId}`. Requiring the same
+    document is what makes another trip's key ID a `404`. No target → `404`.
+  - Every lookup also returns the key's `last_used_at`, for the hourly touch.
 - **Atomicity.** D1 has no interactive transactions: atomicity comes from `batch()`, which
   runs its statements as one transaction and rolls back if any fails. Write each statement
   so it is safe whatever the others do.
@@ -117,18 +131,28 @@ Points worth knowing:
 - **Publishing** (`publications.publish`): one upsert, `PUBLISH_SQL`, that only publishes an
   existing non-deleted version of a document whose latest version isn't a deletion marker,
   so a publish racing a delete can't make a deleted document readable (`changes = 0` → `422`).
-- **Revoking** (build step 6, planned):
-
-  ```sql
-  update document_keys
-  set revoked_at = coalesce(revoked_at, ?1)
-  where id = ?2 and document_id = ?3;
-  ```
-
-  `coalesce` makes a repeat safe and keeps the original time; zero rows → `404`;
-  `document_id = ?3` stops a manager key revoking keys on another document.
-- **Key `last_used_at`**: set on every create for creator keys; for document keys, updated
-  at most hourly (build step 6), not on every read.
+- **Managing keys** (`D1KeyRepository`, `keys.ts`). Every write includes
+  `REQUESTER_IS_ACTIVE`, an `exists` condition that the requesting key is still unrevoked
+  and unexpired on this document. A check in the earlier lookup can't protect the invariant
+  "a document always keeps a working manager key": two managers revoking each other would
+  both pass it. D1 runs statements one at a time, so with the condition in the write, the
+  second revocation changes nothing. Zero changes are then diagnosed with
+  `REQUESTER_IS_ACTIVE_SQL` (only on failure) to tell "requester inactive" (`401`) from the
+  other reason.
+  - `ISSUE_KEY_SQL`: insert … select, only while the document has fewer than `?8` unrevoked
+    keys. The count and the insert are one statement, so the cap is exact (unlike the soft
+    creator cap). Zero changes: cap reached (`409`) or requester inactive (`401`).
+  - `SET_EXPIRY_SQL`: only an unrevoked key, and never a date on a manager key (the check
+    constraint would also refuse). Zero changes after the route's checks: the target was
+    revoked meanwhile (`409`) or the requester was (`401`).
+  - `REVOKE_KEY_SQL`: `revoked_at = coalesce(revoked_at, now)`, so a repeat is safe and keeps
+    the original time; `document_id` scopes it to this trip; `id <> requester` refuses
+    self-revocation even if the route's check were skipped.
+  - `LIST_KEYS_SQL`: through `document_keys_document_id`, oldest first.
+  - `TOUCH_KEY_SQL`: sets `last_used_at` only if it is missing or older than an hour, so the
+    SQL limits the rate even if a caller touched on every request.
+- **Key `last_used_at`**: set on every create for creator keys; for document keys, at most
+  hourly, through `lookUpWithDocumentKey`.
 - Revocation is immediate, so key lookups are never cached.
 
 ## Requests (`src/routes/`, `src/utils/`)
@@ -140,6 +164,10 @@ Points worth knowing:
   `Content-Length`) and decodes strict UTF-8. `routes/json-body.ts` adds JSON parsing and a
   Zod schema: `415`, `413`, `400`, `422` in that order.
 - `routes/problems.ts` gives each error status one wording everywhere.
+- `routes/json-body.ts` takes the accepted media types; `PATCH …/keys/{keyId}` accepts
+  `application/merge-patch+json` and `application/json`.
+- `routes/keys.ts` maps a stored key to the API's shape (`keySummary`): expiry as the last
+  valid day (`dateFromExpiresAt`), `status` from `keyStatus`, and `isCurrentKey`.
 - `routes/version-response.ts` sends a stored version (`200` or `304`) the same way for the
   latest and the published version.
 - `app.onError` logs only the error's name and message, never the request, so a key can't

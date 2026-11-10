@@ -8,7 +8,7 @@ import { logQueryCost } from "./query-cost";
  * rather than `401`.
  */
 export const FIND_PUBLISHED_SQL = `
-  select k.id as key_id, k.permission, v.version, v.body
+  select k.id as key_id, k.permission, k.last_used_at, v.version, v.body
   from document_keys k
   left join document_publications p on p.document_id = k.document_id
   left join document_versions v on v.document_id = p.document_id and v.version = p.version
@@ -43,6 +43,7 @@ export const UNPUBLISH_SQL = `delete from document_publications where document_i
 interface PublishedRow {
   key_id: string;
   permission: Permission;
+  last_used_at: string | null;
   version: number | null;
   body: string | null;
 }
@@ -65,7 +66,7 @@ export class D1PublicationRepository implements PublicationRepository {
     if (row === undefined) {
       return null;
     }
-    const key = { keyId: row.key_id, permission: row.permission };
+    const key = { keyId: row.key_id, permission: row.permission, lastUsedAt: row.last_used_at };
     return {
       key,
       published:

@@ -177,8 +177,8 @@ dependency.
 3. ✅ **Create a trip:** `POST /v1/documents`, plus the HTTP groundwork.
 4. ✅ **Save a version:** `GET /v1/documents/{id}` and `POST …/versions` with `If-Match`.
 5. ✅ **Publish and read:** `PUT`, `GET` and `DELETE …/published`.
-6. **Keys:** list, issue, change expiry, revoke. Also start updating document keys'
-   `last_used_at` (at most hourly), which the key list shows.
+6. ✅ **Keys:** list, issue, change expiry and revoke, plus document keys' hourly
+   `last_used_at`.
 7. **The rest:** history, one version, `PATCH` (merge patch), `DELETE` a document. Needs
    Open Decision 5 first.
 

@@ -54,7 +54,28 @@ Capability-based access: **holding a key is the permission.**
   affecting anyone else.
 - A document's ID is public. Keys are sent separately, so a key can be replaced without the
   document's address changing.
-- Each key can be labelled (e.g. "phone app"), and there is a cap on keys per document.
+- Every key a manager issues has a label of 1–100 characters. **Labels name a role and a
+  device ("Kyoto desk – laptop"), never a person**: a name would be personal data. The API
+  can't enforce this, so the planner client must tell staff. A trip's three initial keys are
+  labelled "Initial manager key", "Initial editor key" and "Initial reader key".
+- A document can have at most 20 unrevoked keys. Expired keys count, because they can be
+  reactivated; revoked keys don't, because they can't.
+
+## Managing keys
+
+- Only a manager key can list, issue, change the expiry of or revoke a document's keys.
+- The key list shows every key on the document, revoked and expired ones included, so it is
+  a record of who had access: its ID, permission, label, when it was created, when it was
+  last used, its expiry (the last valid day), when it was revoked, its status (`active`,
+  `expired` or `revoked`) and whether it is the key making the request. It never shows a key
+  or its hash.
+- "Last used" is approximate: it is recorded at most once an hour per key, so a trip's
+  shared reader key costs at most 24 writes a day however many travellers use it. A request
+  counts as use once the key authenticates, even if it is then refused with `403`.
+- Issuing a key returns it once. Keys can't be issued on a deleted document (`410`), but
+  keys can still be revoked or have their expiry changed there: cutting off access is always
+  safe.
+- Key-management requests need no `If-Match`: each states the whole intended result.
 
 ## Requests
 
@@ -75,8 +96,14 @@ Capability-based access: **holding a key is the permission.**
 - A manager key revokes any other key on its document, by the key's public `id`. It can't
   touch keys on another document: a key `id` that isn't on this document gets `404`.
 - Revoking twice is safe and keeps the original revocation time.
-- A manager key can't revoke itself (`409 Conflict`), so a document always keeps a working
-  manager key. To replace a manager key, issue a new one, then use it to revoke the old one.
+- A manager key can't revoke itself (`409`, `/problems/cannot-revoke-own-key`), so a
+  document always keeps a working manager key. To replace a manager key, issue a new one,
+  then use it to revoke the old one.
+- Every key-management change checks, as part of the change itself, that the manager's own
+  key is still active at that moment. Without this, two managers revoking each other at the
+  same moment could both succeed and leave the trip with no working manager key; with it,
+  the second finds its own key revoked and gets `401`. It also stops a manager who has just
+  been revoked from issuing themselves a new key in the gap.
 - Replacing any key = issue a new one, then revoke the old one.
 - Revocation is immediate. It only stops future access: anything already read can't be
   taken back.
@@ -93,11 +120,14 @@ Capability-based access: **holding a key is the permission.**
   manager key. Leavers are handled by revocation.
 - Expiry is a calendar date, `YYYY-MM-DD`, read in UTC. The key works through the whole of
   that day: a key expiring `2027-12-31` stops at `2028-01-01T00:00:00Z`.
-- A manager sets expiry when issuing a key, or later; it can't be in the past (`422`), but
-  today's date is allowed. Keys start with no expiry, so the client sets the shared reader
-  key's expiry after creating the trip, some time after the trip ends.
+- A manager sets expiry when issuing a key, or later with a JSON Merge Patch
+  (`{ "expiresAt": "2027-12-31" }`, or `null` to remove it). It can't be in the past
+  (`422`), but today's date is allowed. Giving a manager key an expiry is `422`. Keys start
+  with no expiry, so the client sets the shared reader key's expiry after creating the trip,
+  some time after the trip ends.
 - Extending a key reactivates it if it has expired, so trip dates can change without
-  re-sending the travellers' link. A revoked key can never be reactivated.
+  re-sending the travellers' link. A revoked key can never be reactivated: changing its
+  expiry is `409`, `/problems/key-revoked`.
 
 ## Outside the API
 
@@ -168,8 +198,8 @@ These bound storage, not request rates, so they apply from the start.
 | Versions kept per document      | 10, plus the published version                        | Oldest pruned           |
 | Document size                   | 200,000 bytes of UTF-8 JSON                           | `413`                   |
 | Documents per creator key       | 100 (a soft cap: simultaneous creates can pass it by one or two) | `409` (`/problems/document-limit-reached`) |
-| Keys per document               | 20                                                    | `409`                   |
-| Publish request size            | 1,000 bytes                                           | `413`                   |
+| Unrevoked keys per document     | 20 (expired keys count; revoked ones don't)           | `409` (`/problems/key-limit-reached`) |
+| Publish and key-management request size | 1,000 bytes                                   | `413`                   |
 
 At 200 KB and 10 versions a document can reach 2 MB, so about 250 documents could fill the
 500 MB free database; one creator key's full cap is 200 MB.

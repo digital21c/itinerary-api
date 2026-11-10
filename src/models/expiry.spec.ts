@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expiresAtFromDate, isFutureExpiry } from "./expiry";
+import { dateFromExpiresAt, expiresAtFromDate, isFutureExpiry } from "./expiry";
 
 describe("expiresAtFromDate", () => {
   it.each([
@@ -42,4 +42,13 @@ describe("isFutureExpiry", () => {
   it("rejects an expiry at exactly now", () => {
     expect(isFutureExpiry(now.toISOString(), now)).toBe(false);
   });
+});
+
+describe("dateFromExpiresAt", () => {
+  it.each(["2027-12-31", "2028-02-29", "2027-01-01", "2026-11-10"])(
+    "gives back %s, the date it was set from",
+    (date) => {
+      expect(dateFromExpiresAt(expiresAtFromDate(date) ?? "")).toBe(date);
+    },
+  );
 });

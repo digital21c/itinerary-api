@@ -24,6 +24,12 @@ export function expiresAtFromDate(date: string): string | null {
   return startOfNextDay.toISOString();
 }
 
+/** The last valid day (YYYY-MM-DD) for a stored `expires_at`: the inverse of `expiresAtFromDate`. */
+export function dateFromExpiresAt(expiresAt: string): string {
+  const lastValidInstant = new Date(new Date(expiresAt).getTime() - 1);
+  return lastValidInstant.toISOString().slice(0, 10);
+}
+
 /** An expiry must be in the future. Today's date is allowed: the key works until midnight UTC. */
 export function isFutureExpiry(expiresAt: string, now: Date): boolean {
   return expiresAt > now.toISOString();

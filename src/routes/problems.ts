@@ -77,3 +77,40 @@ export function notPublishable(): Response {
     "That version can't be published: it doesn't exist, was pruned, or the document was deleted.",
   );
 }
+
+export function keyNotFound(): Response {
+  return problemResponse({
+    status: 404,
+    title: "Not Found",
+    detail: "There is no key with that ID on this document.",
+  });
+}
+
+export function keyLimitReached(maxKeys: number): Response {
+  return problemResponse({
+    status: 409,
+    type: "/problems/key-limit-reached",
+    title: "Key limit reached",
+    detail: `A document can have at most ${String(maxKeys)} unrevoked keys. Revoke one first.`,
+  });
+}
+
+export function keyRevoked(): Response {
+  return problemResponse({
+    status: 409,
+    type: "/problems/key-revoked",
+    title: "Key revoked",
+    detail: "A revoked key can never be reactivated. Issue a new key instead.",
+  });
+}
+
+export function cannotRevokeOwnKey(): Response {
+  return problemResponse({
+    status: 409,
+    type: "/problems/cannot-revoke-own-key",
+    title: "Cannot revoke own key",
+    detail:
+      "A manager key can't revoke itself, so the document always keeps a working manager key. " +
+      "Issue a new manager key and use it to revoke this one.",
+  });
+}

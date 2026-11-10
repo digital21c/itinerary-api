@@ -7,6 +7,51 @@ a decision is made, in the same commit as the change it causes.
 
 ## 2026-11-10
 
+**Every key-management write checks, inside the statement, that the requesting key is still
+active.** *Why:* the ban on self-revocation doesn't stop two managers revoking each other at
+the same moment, which would leave a trip with no working manager key. A check in an earlier
+query can't protect that; a condition in the write can, because D1 runs statements one at a
+time. The second of the two gets `401`.
+
+**Key labels name a role and a device, not a person,** and are required when issuing a key.
+*Why:* a name would be personal data. The API can't enforce it, so the guide and the planner
+client tell staff. *Alternative turned down:* accepting staff names as minimal staff data.
+
+**A trip's three initial keys are labelled "Initial manager/editor/reader key".** *Why:* the
+key list is readable from the start.
+
+**The key cap counts unrevoked keys (expired ones included), and is exact.** *Why:* revoked
+keys can't come back, so counting them would eventually block a trip whose keys were
+replaced often; expired keys can be reactivated, so they still count. The count and the
+insert are one statement.
+
+**The key list includes revoked and expired keys, has a `status` and `isCurrentKey`, and is
+not paginated.** *Why:* it doubles as the record of who had access; at most 20 keys are
+active, and revoked ones accumulate slowly. A filter is the fix if it ever grows long.
+
+**`PATCH …/keys/{keyId}` takes a JSON Merge Patch** (`application/merge-patch+json`, or plain
+`application/json`): a date sets or extends the expiry, `null` removes it. *Why:* the
+standard format, the same one the document `PATCH` will use. *Alternative turned down:*
+`PUT` with the whole key record, resending fields that can't change.
+
+**Key management needs no `If-Match`.** *Why:* like publishing, each request states the
+whole intended result.
+
+**Keys can't be issued on a deleted document (`410`), but can be revoked or have their
+expiry changed there.** *Why:* cutting off access is always safe.
+
+**Key-management responses are `Cache-Control: no-store`.** *Why:* security information;
+after a revocation a stale copy would mislead.
+
+**Document keys' `last_used_at` is recorded at most hourly, inline, when a key
+authenticates (even if the request is then `403`).** *Why:* one write per key per hour;
+`waitUntil` isn't available in `app.request()` tests and isn't worth the complexity.
+
+**The query-plan test allows the foreign-key check scans on `document_keys` inserts.** *Why:*
+SQLite plans scans of the unindexed child columns but only runs them while violations are
+pending; a test measuring `rows_read` proves they don't run. Indexing those columns would
+charge every write for nothing.
+
 **Documentation split into `docs/`.** `design.md` (logical design, shared with the
 front-end), `implementation.md` (backend internals), `api-guide.md` (for client developers)
 and this log. `CLAUDE.md` keeps working instructions and imports the first two. *Why:* the

@@ -3,6 +3,7 @@
  * No Node or Wrangler here, so they can be unit tested.
  */
 import { expiresAtFromDate, isFutureExpiry } from "../src/models/expiry.ts";
+import { MAX_LABEL_LENGTH, normaliseLabel } from "../src/models/labels.ts";
 
 export interface NewCreatorKey {
   id: string;
@@ -12,15 +13,13 @@ export interface NewCreatorKey {
   expiresAt: string | null;
 }
 
-const MAX_LABEL_LENGTH = 100;
-
+/** A label by the API's own rule (`src/models/labels.ts`), or an error explaining it. */
 export function parseLabel(raw: string): string {
-  const label = raw.trim();
-  if (label.length === 0 || label.length > MAX_LABEL_LENGTH) {
-    throw new Error(`The label must be 1 to ${String(MAX_LABEL_LENGTH)} characters.`);
-  }
-  if (/\p{Cc}/u.test(label)) {
-    throw new Error("The label can't contain control characters.");
+  const label = normaliseLabel(raw);
+  if (label === null) {
+    throw new Error(
+      `The label must be 1 to ${String(MAX_LABEL_LENGTH)} characters, with no control characters.`,
+    );
   }
   return label;
 }

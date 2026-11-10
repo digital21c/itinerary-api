@@ -11,9 +11,15 @@ export type JsonBody<T> = { ok: true; value: T } | { ok: false; response: Respon
  */
 export async function readJsonBody<T>(
   request: Request,
-  options: { maxBytes: number; schema: z.ZodType<T>; invalidDetail: string },
+  options: {
+    maxBytes: number;
+    schema: z.ZodType<T>;
+    invalidDetail: string;
+    /** Accepted media types; `application/json` if not given. */
+    mediaTypes?: readonly string[];
+  },
 ): Promise<JsonBody<T>> {
-  if (!isJsonMediaType(request.headers.get("Content-Type") ?? undefined)) {
+  if (!isJsonMediaType(request.headers.get("Content-Type") ?? undefined, options.mediaTypes)) {
     return { ok: false, response: unsupportedMediaType() };
   }
 

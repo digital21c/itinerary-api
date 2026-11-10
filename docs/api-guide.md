@@ -38,10 +38,10 @@ than copying them.
 | `GET /v1/documents/{id}/published`         | What travellers see                  | Built   |
 | `PUT /v1/documents/{id}/published`         | Publish a version                    | Built   |
 | `DELETE /v1/documents/{id}/published`      | Unpublish                            | Built   |
-| `GET /v1/documents/{id}/keys`              | List the trip's keys                 | Planned (step 6) |
-| `POST /v1/documents/{id}/keys`             | Issue a key                          | Planned (step 6) |
-| `PATCH /v1/documents/{id}/keys/{keyId}`    | Change a key's expiry                | Planned (step 6) |
-| `DELETE /v1/documents/{id}/keys/{keyId}`   | Revoke a key                         | Planned (step 6) |
+| `GET /v1/documents/{id}/keys`              | List the trip's keys                 | Built   |
+| `POST /v1/documents/{id}/keys`             | Issue a key                          | Built   |
+| `PATCH /v1/documents/{id}/keys/{keyId}`    | Change a key's expiry                | Built   |
+| `DELETE /v1/documents/{id}/keys/{keyId}`   | Revoke a key                         | Built   |
 | `GET /v1/documents/{id}/versions`          | History: numbers and dates, no bodies | Planned (step 7) |
 | `GET /v1/documents/{id}/versions/{n}`      | One version                          | Planned (step 7) |
 | `PATCH /v1/documents/{id}`                 | JSON Merge Patch on the latest version | Planned (step 7) |
@@ -55,8 +55,9 @@ Only built endpoints are in `openapi.yaml`.
   path, a log, an analytics event or an error report.
 - **A key is shown once.** `POST /v1/documents` returns the trip's manager, editor and reader
   keys in its response, and they can never be retrieved again. Store them before doing
-  anything else. Where the planner client keeps them (its "keyring"), and how that is
-  backed up or moved between devices, is still an open decision.
+  anything else. The same goes for a key issued with `POST …/keys`. Where the planner
+  client keeps them (its "keyring"), and how that is backed up or moved between devices, is
+  still an open decision.
 - The prefix tells you what a key is for: `ck_` creator, `mk_` manager, `ek_` editor,
   `rk_` reader. A trip's keys work only on that trip.
 - A `401` never says why: missing, malformed, unknown, revoked and expired keys, and trips
@@ -116,9 +117,41 @@ recovery, not an archive.
   (`history.replaceState`), so the key doesn't linger in screenshots or get copied with the
   URL by accident.
 - Travellers share one reader key per trip. To cut everyone off (say a link leaked), a
-  manager issues a new reader key and revokes the old one (step 6), then re-sends the link.
-- After the trip is created, set the reader key's expiry to some date after the trip ends
-  (step 6). Extending it later reactivates it, so changed trip dates don't need a new link.
+  manager issues a new reader key, revokes the old one, and re-sends the link.
+- After the trip is created, set the reader key's expiry to some date after the trip ends:
+  `PATCH /v1/documents/{id}/keys/{keyId}` with `{ "expiresAt": "2027-05-15" }`. Extending it
+  later reactivates it, so changed trip dates don't need a new link. The reader key's `id`
+  is in the key list (labelled "Initial reader key").
+
+## Workflow: manage staff keys (managers)
+
+Only a manager key can do this. Give **each person their own key on each trip**, so one
+person can be cut off without affecting anyone else.
+
+- **List:** `GET /v1/documents/{id}/keys` → `{ "keys": [...] }`, every key on the trip,
+  revoked and expired ones included, oldest first. Each entry has `id`, `permission`,
+  `label`, `createdAt`, `lastUsedAt` (approximate, updated at most hourly), `expiresAt` (the
+  last valid day, or `null`), `revokedAt`, `status` (`active`, `expired`, `revoked`) and
+  `isCurrentKey` (the key you are using: hide "revoke" for it). Never the keys themselves.
+- **Issue:** `POST /v1/documents/{id}/keys` with
+  `{ "permission": "editor", "label": "Kyoto desk – laptop", "expiresAt": "2027-05-15" }`
+  (`expiresAt` optional). The `201` has the key: **store it or hand it over now**, it is
+  never shown again. Label by role and device, never by a person's name (personal data).
+  Manager keys can't be given an expiry (`422`). At 20 unrevoked keys the answer is `409`
+  with `type` `/problems/key-limit-reached`: revoke a key first. A deleted trip is `410`.
+- **Change expiry:** `PATCH /v1/documents/{id}/keys/{keyId}`, sent as
+  `application/merge-patch+json` (plain `application/json` also works), with
+  `{ "expiresAt": "YYYY-MM-DD" }` to set or extend it, or `{ "expiresAt": null }` to remove
+  it. Extending an expired key brings it back. A revoked key can't come back: `409`,
+  `/problems/key-revoked`.
+- **Revoke:** `DELETE /v1/documents/{id}/keys/{keyId}` → `204`. The key stops working at
+  once, everywhere. Repeating it is harmless. A key that isn't on this trip is `404`.
+- **Replace a key:** issue a new one, then revoke the old one. A manager key can't revoke
+  itself (`409`, `/problems/cannot-revoke-own-key`), so to replace your own manager key,
+  issue a new manager key and use *it* to revoke the old one.
+- If your own manager key is revoked by someone else while you work, your next request gets
+  `401`, even in the middle of an operation.
+- None of these need `If-Match`. Responses are `Cache-Control: no-store`.
 
 ## Workflow: read a trip (travellers)
 
@@ -149,8 +182,8 @@ apart, `type` is a `/problems/…` URI, such as `/problems/document-limit-reache
 | `400`  | Malformed: invalid JSON or UTF-8, bad `If-Match`      | Fix the request (a bug)   |
 | `401`  | This key doesn't work here (never says why)          | Ask for a valid key       |
 | `403`  | The key works on this trip but can't do this         | Use a key with more rights |
-| `404`  | Nothing published (readers)                          | Show "not available yet"  |
-| `409`  | A cap was reached (see `type`)                       | Tell the user; no retry   |
+| `404`  | Nothing published (readers), or no such key on this trip | Show "not available yet", or refresh the key list |
+| `409`  | See `type`: a cap was reached (`document-limit-reached`, `key-limit-reached`), the key is revoked (`key-revoked`), or a manager key tried to revoke itself (`cannot-revoke-own-key`) | Tell the user; no retry |
 | `410`  | The trip was deleted                                 | Stop editing it           |
 | `412`  | Someone saved first                                  | Fetch the latest, merge, save again |
 | `413`  | Body over the size limit                             | Tell the user the trip is too big |
@@ -167,7 +200,7 @@ apart, `type` is a `/problems/…` URI, such as `/problems/document-limit-reache
 | Document size                | 200,000 bytes of UTF-8 JSON    |
 | Versions kept per trip       | 10, plus the published version |
 | Trips per creator key        | 100                            |
-| Keys per trip                | 20                             |
+| Unrevoked keys per trip      | 20 (expired keys count)        |
 
 The service runs on Cloudflare's free plan. If a runaway client used up the day's database
 writes, every request would fail until 00:00 UTC, so clients must never save in a loop or

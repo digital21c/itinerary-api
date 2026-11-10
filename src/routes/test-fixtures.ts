@@ -211,3 +211,123 @@ export async function documentOfKey(key: string): Promise<string> {
   }
   return row.document_id;
 }
+
+export interface KeySummary {
+  id: string;
+  permission: "reader" | "editor" | "manager";
+  label: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  status: "active" | "expired" | "revoked";
+  isCurrentKey: boolean;
+}
+
+export interface IssuedKey {
+  id: string;
+  key: string;
+  permission: "reader" | "editor" | "manager";
+  label: string;
+  expiresAt: string | null;
+}
+
+export function listKeys(documentId: string, key: string | null): Promise<Response> {
+  return request(`/v1/documents/${documentId}/keys`, { headers: authorization(key) });
+}
+
+/** The key list as a manager sees it. */
+export async function keysOf(documentId: string, managerKey: string): Promise<KeySummary[]> {
+  const response = await listKeys(documentId, managerKey);
+  expect(response.status).toBe(200);
+  return (await response.json<{ keys: KeySummary[] }>()).keys;
+}
+
+/** The key list entry for a key, found by its plaintext. */
+export async function summaryOf(
+  documentId: string,
+  managerKey: string,
+  key: string,
+): Promise<KeySummary> {
+  const id = await keyIdOf(key);
+  const summary = (await keysOf(documentId, managerKey)).find((entry) => entry.id === id);
+  if (summary === undefined) {
+    throw new Error("The key isn't listed.");
+  }
+  return summary;
+}
+
+export function issueKey(
+  documentId: string,
+  key: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return request(`/v1/documents/${documentId}/keys`, {
+    method: "POST",
+    body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: { ...withKey(key), ...headers },
+  });
+}
+
+/** Issues a key and returns it, failing the test unless it was issued. */
+export async function issued(
+  documentId: string,
+  managerKey: string,
+  body: { permission: string; label?: string; expiresAt?: string },
+): Promise<IssuedKey> {
+  const response = await issueKey(documentId, managerKey, { label: "Test key", ...body });
+  expect(response.status).toBe(201);
+  return response.json<IssuedKey>();
+}
+
+export function setKeyExpiry(
+  documentId: string,
+  key: string,
+  keyId: string,
+  body: unknown,
+  contentType = "application/merge-patch+json",
+): Promise<Response> {
+  return request(`/v1/documents/${documentId}/keys/${keyId}`, {
+    method: "PATCH",
+    body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: { ...authorization(key), "Content-Type": contentType },
+  });
+}
+
+export function revokeKey(
+  documentId: string,
+  key: string | null,
+  keyId: string,
+): Promise<Response> {
+  return request(`/v1/documents/${documentId}/keys/${keyId}`, {
+    method: "DELETE",
+    headers: authorization(key),
+  });
+}
+
+/** A key's public ID, found by its hash. */
+export async function keyIdOf(key: string): Promise<string> {
+  const row = await env.DB.prepare("select id from document_keys where key_hash = ?1")
+    .bind(await hashKey(key))
+    .first<{ id: string }>();
+  if (row === null) {
+    throw new Error("The key isn't stored.");
+  }
+  return row.id;
+}
+
+/** A key's stored row, found by its plaintext. */
+export async function storedKeyRow(key: string) {
+  return env.DB.prepare(
+    "select permission, label, last_used_at, expires_at, revoked_at from document_keys where key_hash = ?1",
+  )
+    .bind(await hashKey(key))
+    .first<{
+      permission: string;
+      label: string | null;
+      last_used_at: string | null;
+      expires_at: string | null;
+      revoked_at: string | null;
+    }>();
+}

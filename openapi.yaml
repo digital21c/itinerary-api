@@ -310,6 +310,186 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/documents/{id}/keys:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      operationId: listKeys
+      summary: List the document's keys
+      description: |
+        Manager key. Every key on the document, revoked and expired ones included, oldest
+        first. Never the keys themselves or their hashes: a key is shown only when issued.
+      responses:
+        "200":
+          description: The keys.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                additionalProperties: false
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KeySummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: issueKey
+      summary: Issue a key
+      description: |
+        Manager key. Issues one labelled key, for one person or device, on this document. The
+        key is in this response only and can never be retrieved again.
+
+        Label by role and device ("Kyoto desk – laptop"), not by a person's name: a name
+        would be personal data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueKeyRequest"
+      responses:
+        "201":
+          description: Issued. Store the key now.
+          headers:
+            Location:
+              description: The new key's URL.
+              schema:
+                type: string
+                example: /v1/documents/7d1c0a4e-2b3f-4f60-9c1a-5e8d2f6b9a01/keys/3f9c2b1e-…
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The document already has 20 unrevoked keys. Revoke one first.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: /problems/key-limit-reached
+                title: Key limit reached
+                status: 409
+        "410":
+          $ref: "#/components/responses/DocumentGone"
+        "413":
+          $ref: "#/components/responses/SmallBodyTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          description: |
+            The body doesn't match `IssueKeyRequest`, `expiresAt` is in the past or not a real
+            date, or an expiry was given for a manager key (manager keys never expire).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/documents/{id}/keys/{keyId}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+      - name: keyId
+        in: path
+        required: true
+        description: The key's public ID, from the key list or from issuing it.
+        schema:
+          type: string
+          format: uuid
+    patch:
+      operationId: setKeyExpiry
+      summary: Change a key's expiry
+      description: |
+        Manager key. `{ "expiresAt": "YYYY-MM-DD" }` sets or extends the expiry; the key works
+        through the whole of that day (UTC). Extending an expired key reactivates it, so
+        changed trip dates don't need a new link. `{ "expiresAt": null }` removes the expiry.
+
+        The body is a JSON Merge Patch (RFC 7396). No `If-Match` needed: the request states
+        the whole intended result.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/SetKeyExpiryRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetKeyExpiryRequest"
+      responses:
+        "204":
+          description: Changed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/KeyNotFound"
+        "409":
+          description: The key is revoked, and a revoked key can never be reactivated.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: /problems/key-revoked
+                title: Key revoked
+                status: 409
+        "413":
+          $ref: "#/components/responses/SmallBodyTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          description: |
+            The body doesn't match `SetKeyExpiryRequest`, the date is in the past or not a real
+            date, or it is a manager key (manager keys never expire).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    delete:
+      operationId: revokeKey
+      summary: Revoke a key
+      description: |
+        Manager key. The key stops working at once, everywhere. Revoking it again is safe and
+        keeps the original time. A manager key can't revoke itself: to replace one, issue a new
+        manager key, then use it to revoke the old one.
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/KeyNotFound"
+        "409":
+          description: A manager key tried to revoke itself.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: /problems/cannot-revoke-own-key
+                title: Cannot revoke own key
+                status: 409
+
 components:
   parameters:
     DocumentId:
@@ -322,6 +502,11 @@ components:
         format: uuid
 
   headers:
+    NoStore:
+      description: Always `no-store`.
+      schema:
+        type: string
+        const: no-store
     VersionETag:
       description: The version number as a strong entity tag, such as `"3"`.
       schema:
@@ -352,6 +537,103 @@ components:
           type: integer
           minimum: 1
           description: The version to publish.
+
+    Permission:
+      type: string
+      enum: [reader, editor, manager]
+
+    ExpiryDate:
+      type: string
+      format: date
+      description: |
+        The last day the key works, `YYYY-MM-DD`, read in UTC: the key works through the whole
+        of that day.
+      example: "2027-04-30"
+
+    Label:
+      type: string
+      minLength: 1
+      maxLength: 100
+      description: |
+        Names a role and a device, such as "Kyoto desk – laptop", never a person. Trimmed; no
+        control characters.
+
+    KeySummary:
+      type: object
+      required:
+        [id, permission, label, createdAt, lastUsedAt, expiresAt, revokedAt, status, isCurrentKey]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        permission:
+          $ref: "#/components/schemas/Permission"
+        label:
+          type: [string, "null"]
+          description: The trip's three initial keys are labelled "Initial … key".
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Approximate, updated at most hourly. `null` if never used.
+        expiresAt:
+          oneOf:
+            - $ref: "#/components/schemas/ExpiryDate"
+            - type: "null"
+        revokedAt:
+          type: [string, "null"]
+          format: date-time
+        status:
+          type: string
+          enum: [active, expired, revoked]
+        isCurrentKey:
+          type: boolean
+          description: True for the key making this request.
+
+    IssueKeyRequest:
+      type: object
+      required: [permission, label]
+      additionalProperties: false
+      properties:
+        permission:
+          $ref: "#/components/schemas/Permission"
+        label:
+          $ref: "#/components/schemas/Label"
+        expiresAt:
+          $ref: "#/components/schemas/ExpiryDate"
+
+    IssuedKey:
+      type: object
+      required: [id, key, permission, label, expiresAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          $ref: "#/components/schemas/Key"
+        permission:
+          $ref: "#/components/schemas/Permission"
+        label:
+          type: string
+        expiresAt:
+          oneOf:
+            - $ref: "#/components/schemas/ExpiryDate"
+            - type: "null"
+
+    SetKeyExpiryRequest:
+      type: object
+      required: [expiresAt]
+      additionalProperties: false
+      properties:
+        expiresAt:
+          oneOf:
+            - $ref: "#/components/schemas/ExpiryDate"
+            - type: "null"
+          description: A date sets or extends the expiry; `null` removes it.
 
     CreatedDocument:
       type: object
@@ -417,6 +699,18 @@ components:
             $ref: "#/components/schemas/Problem"
     UnsupportedMediaType:
       description: The body isn't `application/json`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    KeyNotFound:
+      description: There is no key with that ID on this document.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    SmallBodyTooLarge:
+      description: The body is over 1,000 bytes.
       content:
         application/problem+json:
           schema:

@@ -3,10 +3,16 @@
  * UTF-8 decoding.
  */
 
-/** True for `application/json`, with or without parameters such as `charset=utf-8`. */
-export function isJsonMediaType(contentType: string | undefined): boolean {
+/**
+ * True if the media type is one of `allowed` (by default `application/json`), with or without
+ * parameters such as `charset=utf-8`.
+ */
+export function isJsonMediaType(
+  contentType: string | undefined,
+  allowed: readonly string[] = ["application/json"],
+): boolean {
   const mediaType = contentType?.split(";")[0]?.trim().toLowerCase();
-  return mediaType === "application/json";
+  return mediaType !== undefined && allowed.includes(mediaType);
 }
 
 export type BodyText = { ok: true; text: string } | { ok: false; reason: "too-large" | "not-utf8" };

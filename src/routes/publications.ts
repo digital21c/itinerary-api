@@ -21,6 +21,7 @@ publicationRoutes.get("/:id/published", async (c) => {
     c.req.param("id"),
     c.req.header("Authorization"),
     (documentId, keyHash, now) => publications.findPublished(documentId, keyHash, now),
+    c.var.repositories.keys,
   );
   if (found === null) {
     return unauthorized();
@@ -46,6 +47,7 @@ publicationRoutes.put("/:id/published", async (c) => {
     documentId,
     c.req.header("Authorization"),
     (id, keyHash, now) => documents.findLatestHead(id, keyHash, now),
+    c.var.repositories.keys,
   );
   if (found === null) {
     return unauthorized();
@@ -88,6 +90,7 @@ publicationRoutes.delete("/:id/published", async (c) => {
     documentId,
     c.req.header("Authorization"),
     (id, keyHash, now) => documents.findLatestHead(id, keyHash, now),
+    c.var.repositories.keys,
   );
   if (found === null) {
     return unauthorized();

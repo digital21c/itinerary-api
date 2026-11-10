@@ -290,7 +290,7 @@ describe("POST /v1/documents: success", () => {
     ]);
 
     const keys = await env.DB.prepare(
-      `select permission, hex(key_hash) as hash, expires_at, revoked_at from document_keys
+      `select permission, label, hex(key_hash) as hash, expires_at, revoked_at from document_keys
        where document_id = ?1 order by permission`,
     )
       .bind(created.id)
@@ -299,18 +299,21 @@ describe("POST /v1/documents: success", () => {
     expect(keys.results).toEqual([
       {
         permission: "editor",
+        label: "Initial editor key",
         hash: await hexHash(created.editorKey),
         expires_at: null,
         revoked_at: null,
       },
       {
         permission: "manager",
+        label: "Initial manager key",
         hash: await hexHash(created.managerKey),
         expires_at: null,
         revoked_at: null,
       },
       {
         permission: "reader",
+        label: "Initial reader key",
         hash: await hexHash(created.readerKey),
         expires_at: null,
         revoked_at: null,
