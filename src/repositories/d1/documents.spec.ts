@@ -54,3 +54,61 @@ describe("D1DocumentRepository.create", () => {
     });
   });
 });
+
+describe("D1DocumentRepository.appendVersion", () => {
+  async function storedDocument() {
+    const repository = new D1DocumentRepository(env.DB);
+    const document = await newDocument(await insertCreatorKeyRow(), new Date());
+    await repository.create(document);
+    const editorKeyId = document.keys.find((key) => key.permission === "editor")?.id ?? "";
+    return { repository, document, editorKeyId };
+  }
+
+  function version(documentId: string, baseVersion: number, createdBy: string) {
+    return {
+      documentId,
+      baseVersion,
+      newVersion: baseVersion + 1,
+      body: JSON.stringify({ base: baseVersion }),
+      createdAt: new Date().toISOString(),
+      createdBy,
+    };
+  }
+
+  async function versionsOf(documentId: string): Promise<number[]> {
+    const { results } = await env.DB.prepare(
+      "select version from document_versions where document_id = ?1 order by version",
+    )
+      .bind(documentId)
+      .all<{ version: number }>();
+    return results.map((row) => row.version);
+  }
+
+  it("appends when the base is the latest version", async () => {
+    const { repository, document, editorKeyId } = await storedDocument();
+
+    expect(await repository.appendVersion(version(document.id, 1, editorKeyId), 10)).toBe(
+      "appended",
+    );
+    expect(await versionsOf(document.id)).toEqual([1, 2]);
+  });
+
+  // The route checks the base first; this is the atomic check that stops a race between them.
+  it("inserts nothing when the base is no longer the latest", async () => {
+    const { repository, document, editorKeyId } = await storedDocument();
+    await repository.appendVersion(version(document.id, 1, editorKeyId), 10);
+
+    expect(await repository.appendVersion(version(document.id, 1, editorKeyId), 10)).toBe("stale");
+    expect(await versionsOf(document.id)).toEqual([1, 2]);
+  });
+
+  it("prunes to the given number of versions", async () => {
+    const { repository, document, editorKeyId } = await storedDocument();
+
+    for (const base of [1, 2, 3]) {
+      await repository.appendVersion(version(document.id, base, editorKeyId), 2);
+    }
+
+    expect(await versionsOf(document.id)).toEqual([3, 4]);
+  });
+});

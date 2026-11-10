@@ -343,7 +343,8 @@ method.
 
 - D1 bills for rows scanned, not rows returned, so every frequent query must use an index.
   Check new queries with `EXPLAIN QUERY PLAN`: `SEARCH … USING INDEX` is what you want, and
-  a plain `SCAN` reads every row.
+  a plain `SCAN` reads every row. `src/repositories/d1/query-plans.spec.ts` enforces this:
+  export each frequent query's SQL as a constant and add it there.
 - Primary keys and `unique` columns are indexed automatically. Foreign keys are not.
 - Each index adds a written row whenever a write touches the indexed column, and writes are
   the tighter daily limit. Only add an index for a query that runs often.
@@ -367,19 +368,22 @@ where k.document_id = ?1 and k.key_hash = ?2 and k.revoked_at is null
 
 No row → `401`. A row with a null `version` → `404` (nothing is published).
 
-The latest working version (the history endpoints follow the same key rules):
+The latest working version (the history endpoints follow the same key rules). It starts
+from the key's unique hash, then finds that document's highest version through the primary
+key, so it reads a few rows however long the history is (as built in step 4):
 
 ```sql
-select v.version, v.body, v.deleted, k.id as key_id, k.permission
-from document_versions v
-join document_keys k on k.document_id = v.document_id
-where v.document_id = ?1 and k.key_hash = ?2 and k.revoked_at is null
-  and (k.expires_at is null or k.expires_at > ?3)
-order by v.version desc
-limit 1;
+select k.id as key_id, k.permission, v.version, v.deleted, v.body
+from document_keys k
+join document_versions v
+  on v.document_id = k.document_id
+ and v.version = (select max(version) from document_versions where document_id = k.document_id)
+where k.key_hash = ?2 and k.document_id = ?1 and k.revoked_at is null
+  and (k.expires_at is null or k.expires_at > ?3);
 ```
 
-No row → `401`. A reader key → `403`.
+No row → `401`. A reader key → `403`. A deletion marker → `410`. Writes use the same query
+without `v.body`, since they only need the version number.
 
 ## Creating
 
@@ -536,9 +540,18 @@ DELETE  /v1/documents/{id}/keys/{keyId}  revoke → 204
 - CORS allows any origin (`*`) without credentials: with bearer keys and no cookies it
   protects nothing. Exposed headers: `ETag`, `Location`.
 - Writes require `If-Match`. Missing → `428 Precondition Required`. Stale → `412`.
+  `If-Match` must be exactly one strong tag such as `"3"`; `*`, lists and weak tags → `400`
+  (stricter than RFC 9110, because "save over the version I edited" names one version).
+- Order of checks on a write: key (`401`/`403`), preconditions (`428`/`400`/`410`/`412`),
+  then the body. Preconditions come before the body is read (RFC 9110 §13.2.1).
+- The early `412` check is a shortcut; the conditional `insert` is what stops a race.
+- `POST …/versions` answers `201` with `Location` and `ETag` and no body.
 - `GET` latest and `GET` published honour `If-None-Match` → `304`, which suits travellers
-  on poor connections. Separate URLs for latest and published, so one URL never returns
-  different content depending on the key.
+  on poor connections. It uses weak comparison and accepts `*` and lists. Separate URLs
+  for latest and published, so one URL never returns different content depending on the key.
+- `GET` latest sends `Cache-Control: private, no-cache` (keep, but revalidate) and the body
+  exactly as stored, so reads never parse JSON.
+- A document ID that isn't a UUID gets the same `401` as an unknown document, without a query.
 - A specific version is cached with `Cache-Control: private, max-age=31536000, immutable`
   (`private` because responses depend on a key).
 - Status codes: `400` malformed request, `422` well-formed but invalid, `401` / `403` as in
@@ -639,7 +652,8 @@ design of a step before starting it if it adds an endpoint, a folder or a depend
    `POST /v1/documents/{id}/versions` with `If-Match`, the conflict check and pruning.
 5. **Publish and read:** `PUT …/published` and `GET …/published`, completing the first full
    traveller path.
-6. **Keys:** list, issue, change expiry, revoke.
+6. **Keys:** list, issue, change expiry, revoke. Also start updating document keys'
+   `last_used_at` (at most hourly), which the key list shows; deferred from step 4.
 7. **The rest:** history, one version, `PATCH` (merge patch), `DELETE` a document,
    unpublish.
 

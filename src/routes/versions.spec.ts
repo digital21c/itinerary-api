@@ -1,0 +1,366 @@
+import { env } from "cloudflare:workers";
+import { describe, expect, it } from "vitest";
+import { generateKey, hashKey } from "../auth/keys";
+import { MAX_DOCUMENT_BYTES, MAX_VERSIONS } from "../models/limits";
+import {
+  type CreatedDocument,
+  createDocument,
+  insertCreatorKey,
+  jsonObjectOfSize,
+  request,
+  withKey,
+} from "./test-fixtures";
+
+function getLatest(
+  documentId: string,
+  key: string | null,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  const authorization: Record<string, string> =
+    key === null ? {} : { Authorization: `Bearer ${key}` };
+  return request(`/v1/documents/${documentId}`, { headers: { ...authorization, ...headers } });
+}
+
+function saveVersion(
+  documentId: string,
+  key: string,
+  ifMatch: string | null,
+  body: BodyInit = '{"title":"Edited"}',
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  const precondition: Record<string, string> = ifMatch === null ? {} : { "If-Match": ifMatch };
+  return request(`/v1/documents/${documentId}/versions`, {
+    method: "POST",
+    body,
+    headers: { ...withKey(key), ...precondition, ...headers },
+  });
+}
+
+/** Saves `count` versions in turn, each over the previous one. */
+async function saveVersions(document: CreatedDocument, count: number): Promise<void> {
+  for (let base = 1; base <= count; base++) {
+    const response = await saveVersion(
+      document.id,
+      document.editorKey,
+      `"${String(base)}"`,
+      JSON.stringify({ title: `Version ${String(base + 1)}` }),
+    );
+    expect(response.status).toBe(201);
+  }
+}
+
+async function storedVersions(documentId: string): Promise<number[]> {
+  const { results } = await env.DB.prepare(
+    "select version from document_versions where document_id = ?1 order by version",
+  )
+    .bind(documentId)
+    .all<{ version: number }>();
+  return results.map((row) => row.version);
+}
+
+/** Inserts a deletion marker directly, until DELETE exists (build step 7). */
+async function markDeleted(documentId: string, version: number): Promise<void> {
+  await env.DB.prepare(
+    `insert into document_versions (document_id, version, body, deleted, created_at)
+     values (?1, ?2, null, 1, ?3)`,
+  )
+    .bind(documentId, version, new Date().toISOString())
+    .run();
+}
+
+/** Publishes directly, until PUT …/published exists (build step 5). */
+async function publish(documentId: string, version: number): Promise<void> {
+  await env.DB.prepare(
+    `insert into document_publications (document_id, version, published_at) values (?1, ?2, ?3)`,
+  )
+    .bind(documentId, version, new Date().toISOString())
+    .run();
+}
+
+async function setKeyColumn(key: string, column: "revoked_at" | "expires_at", value: string) {
+  await env.DB.prepare(`update document_keys set ${column} = ?1 where key_hash = ?2`)
+    .bind(value, await hashKey(key))
+    .run();
+}
+
+/** Each way a request can fail authentication, given a document and another document. */
+async function authenticationFailures(
+  document: CreatedDocument,
+  other: CreatedDocument,
+): Promise<[string, string, string | null][]> {
+  const revoked = (await createDocument()).editorKey;
+  const expired = (await createDocument()).editorKey;
+  await setKeyColumn(revoked, "revoked_at", "2026-01-01T00:00:00.000Z");
+  await setKeyColumn(expired, "expires_at", "2026-01-01T00:00:00.000Z");
+  const revokedOn = await documentOfKey(revoked);
+  const expiredOn = await documentOfKey(expired);
+
+  return [
+    ["no key", document.id, null],
+    ["a malformed key", document.id, "ek_short"],
+    ["a creator key", document.id, (await insertCreatorKey()).key],
+    ["an editor key that was never issued", document.id, generateKey("editor")],
+    ["another document's manager key", document.id, other.managerKey],
+    ["a document that doesn't exist", crypto.randomUUID(), document.editorKey],
+    ["an ID that isn't a UUID", "not-a-uuid", document.editorKey],
+    ["a revoked editor key", revokedOn, revoked],
+    ["an expired editor key", expiredOn, expired],
+  ];
+}
+
+async function documentOfKey(key: string): Promise<string> {
+  const row = await env.DB.prepare("select document_id from document_keys where key_hash = ?1")
+    .bind(await hashKey(key))
+    .first<{ document_id: string }>();
+  if (row === null) {
+    throw new Error("The key isn't stored.");
+  }
+  return row.document_id;
+}
+
+describe("GET /v1/documents/{id}", () => {
+  it.each(["editor", "manager"] as const)(
+    "gives a %s key the latest version exactly as stored",
+    async (permission) => {
+      const body = { title: "Kyoto", days: [{ day: 1 }] };
+      const document = await createDocument({ body });
+
+      const response = await getLatest(document.id, document[`${permission}Key`]);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("ETag")).toBe('"1"');
+      expect(response.headers.get("Cache-Control")).toBe("private, no-cache");
+      expect(response.headers.get("Content-Type")).toBe("application/json");
+      expect(await response.text()).toBe(JSON.stringify(body));
+    },
+  );
+
+  it("refuses a reader key with 403", async () => {
+    const document = await createDocument();
+
+    const response = await getLatest(document.id, document.readerKey);
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  });
+
+  it("gives every authentication failure the same 401, never echoing the key", async () => {
+    const [document, other] = [await createDocument(), await createDocument()];
+    const baseline = await (await getLatest(document.id, null)).text();
+
+    for (const [description, documentId, key] of await authenticationFailures(document, other)) {
+      const response = await getLatest(documentId, key);
+      const text = await response.text();
+
+      expect.soft(response.status, description).toBe(401);
+      expect.soft(response.headers.get("WWW-Authenticate"), description).toBe("Bearer");
+      expect.soft(text, description).toBe(baseline);
+      if (key !== null) {
+        expect.soft(text.includes(key), description).toBe(false);
+      }
+    }
+  });
+
+  it.each([
+    ["the same tag", '"1"'],
+    ["a weak tag", 'W/"1"'],
+    ["any tag", "*"],
+    ["a list containing it", '"7", "1"'],
+  ])("answers 304 with no body when If-None-Match holds %s", async (_description, tag) => {
+    const document = await createDocument();
+
+    const response = await getLatest(document.id, document.editorKey, { "If-None-Match": tag });
+
+    expect(response.status).toBe(304);
+    expect(response.headers.get("ETag")).toBe('"1"');
+    expect(await response.text()).toBe("");
+  });
+
+  it("sends the document when If-None-Match holds an older version", async () => {
+    const document = await createDocument();
+    await saveVersions(document, 1);
+
+    const response = await getLatest(document.id, document.editorKey, { "If-None-Match": '"1"' });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("ETag")).toBe('"2"');
+  });
+
+  it("answers 410 once the document is deleted, and still 403 to a reader", async () => {
+    const document = await createDocument();
+    await markDeleted(document.id, 2);
+
+    expect((await getLatest(document.id, document.editorKey)).status).toBe(410);
+    expect((await getLatest(document.id, document.managerKey)).status).toBe(410);
+    expect((await getLatest(document.id, document.readerKey)).status).toBe(403);
+  });
+});
+
+describe("POST /v1/documents/{id}/versions", () => {
+  it("saves the next version, which then reads as the latest", async () => {
+    const document = await createDocument();
+
+    const response = await saveVersion(document.id, document.editorKey, '"1"', '{"title":"Two"}');
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Location")).toBe(`/v1/documents/${document.id}/versions/2`);
+    expect(response.headers.get("ETag")).toBe('"2"');
+    expect(await response.text()).toBe("");
+
+    const latest = await getLatest(document.id, document.editorKey);
+    expect(latest.headers.get("ETag")).toBe('"2"');
+    expect(await latest.json()).toEqual({ title: "Two" });
+  });
+
+  it("records which key saved the version", async () => {
+    const document = await createDocument();
+    await saveVersion(document.id, document.managerKey, '"1"');
+
+    const row = await env.DB.prepare(
+      `select k.permission from document_versions v
+       join document_keys k on k.id = v.created_by
+       where v.document_id = ?1 and v.version = 2`,
+    )
+      .bind(document.id)
+      .first();
+    expect(row).toEqual({ permission: "manager" });
+  });
+
+  it("refuses a save without If-Match with 428", async () => {
+    const document = await createDocument();
+
+    const response = await saveVersion(document.id, document.editorKey, null);
+
+    expect(response.status).toBe(428);
+  });
+
+  it.each([
+    ["an unquoted version", "1"],
+    ["any version", "*"],
+    ["a weak tag", 'W/"1"'],
+    ["a list", '"1", "2"'],
+    ["version 0", '"0"'],
+    ["a leading zero", '"01"'],
+    ["a non-number", '"abc"'],
+    ["an empty tag", '""'],
+  ])("refuses If-Match with %s with 400", async (_description, ifMatch) => {
+    const document = await createDocument();
+
+    const response = await saveVersion(document.id, document.editorKey, ifMatch);
+
+    expect(response.status).toBe(400);
+  });
+
+  it("refuses a save over a version that is no longer the latest with 412", async () => {
+    const document = await createDocument();
+    expect((await saveVersion(document.id, document.editorKey, '"1"')).status).toBe(201);
+
+    const stale = await saveVersion(document.id, document.managerKey, '"1"');
+
+    expect(stale.status).toBe(412);
+    expect(await storedVersions(document.id)).toEqual([1, 2]);
+  });
+
+  it("refuses a save over a version that doesn't exist yet with 412", async () => {
+    const document = await createDocument();
+
+    const response = await saveVersion(document.id, document.editorKey, '"5"');
+
+    expect(response.status).toBe(412);
+  });
+
+  it("lets exactly one of two simultaneous saves on the same version win", async () => {
+    const document = await createDocument();
+
+    const responses = await Promise.all([
+      saveVersion(document.id, document.editorKey, '"1"', '{"by":"editor"}'),
+      saveVersion(document.id, document.managerKey, '"1"', '{"by":"manager"}'),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 412]);
+    expect(await storedVersions(document.id)).toEqual([1, 2]);
+  });
+
+  it("checks If-Match before reading the body", async () => {
+    const document = await createDocument();
+    await saveVersions(document, 1);
+
+    const response = await saveVersion(document.id, document.editorKey, '"1"', "not json");
+
+    expect(response.status).toBe(412);
+  });
+
+  it("refuses a reader key with 403", async () => {
+    const document = await createDocument();
+
+    const response = await saveVersion(document.id, document.readerKey, '"1"');
+
+    expect(response.status).toBe(403);
+    expect(await storedVersions(document.id)).toEqual([1]);
+  });
+
+  it("gives every authentication failure the same 401 as GET", async () => {
+    const [document, other] = [await createDocument(), await createDocument()];
+    const baseline = await (await getLatest(document.id, null)).text();
+
+    for (const [description, documentId, key] of await authenticationFailures(document, other)) {
+      const response =
+        key === null
+          ? await request(`/v1/documents/${documentId}/versions`, {
+              method: "POST",
+              body: "{}",
+              headers: { "Content-Type": "application/json", "If-Match": '"1"' },
+            })
+          : await saveVersion(documentId, key, '"1"');
+
+      expect.soft(response.status, description).toBe(401);
+      expect.soft(await response.text(), description).toBe(baseline);
+    }
+  });
+
+  it.each([
+    ["names the deletion marker", '"2"'],
+    ["names the version before it", '"1"'],
+  ])("refuses a save on a deleted document with 410, when If-Match %s", async (_d, ifMatch) => {
+    const document = await createDocument();
+    await markDeleted(document.id, 2);
+
+    const response = await saveVersion(document.id, document.editorKey, ifMatch);
+
+    expect(response.status).toBe(410);
+    expect(await storedVersions(document.id)).toEqual([1, 2]);
+  });
+
+  it.each([
+    ["text/plain", "{}", { "Content-Type": "text/plain" }, 415],
+    ["an oversized body", jsonObjectOfSize(MAX_DOCUMENT_BYTES + 1), {}, 413],
+    ["invalid JSON", "{", {}, 400],
+    ["an array", "[]", {}, 422],
+  ])("checks the body: %s", async (_description, body, headers, status) => {
+    const document = await createDocument();
+
+    const response = await saveVersion(document.id, document.editorKey, '"1"', body, headers);
+
+    expect(response.status).toBe(status);
+    expect(await storedVersions(document.id)).toEqual([1]);
+  });
+});
+
+describe("retention", () => {
+  it(`keeps only the newest ${String(MAX_VERSIONS)} versions`, async () => {
+    const document = await createDocument();
+
+    await saveVersions(document, MAX_VERSIONS);
+
+    expect(await storedVersions(document.id)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it("never prunes the published version, however old", async () => {
+    const document = await createDocument();
+    await publish(document.id, 1);
+
+    await saveVersions(document, MAX_VERSIONS + 5);
+
+    expect(await storedVersions(document.id)).toEqual([1, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  });
+});

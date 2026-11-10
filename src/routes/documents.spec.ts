@@ -3,62 +3,17 @@ import { describe, expect, it } from "vitest";
 import { generateKey, hashKey } from "../auth/keys";
 import app from "../index";
 import { MAX_DOCUMENT_BYTES, MAX_DOCUMENTS_PER_CREATOR_KEY } from "../models/limits";
+import {
+  type CreatedDocument,
+  createDocument as createDocumentWith,
+  insertCreatorKey,
+  jsonObjectOfSize,
+  postDocument,
+  withKey as asCreator,
+} from "./test-fixtures";
 
-// D1 storage is shared by the tests in this file, so each test makes its own creator key.
-
-interface CreatorKeyFixture {
-  id: string;
-  key: string;
-}
-
-async function insertCreatorKey(
-  options: { expiresAt?: string; revokedAt?: string } = {},
-): Promise<CreatorKeyFixture> {
-  const id = crypto.randomUUID();
-  const key = generateKey("creator");
-  await env.DB.prepare(
-    `insert into creator_keys (id, key_hash, label, created_at, expires_at, revoked_at)
-     values (?1, ?2, 'test', ?3, ?4, ?5)`,
-  )
-    .bind(
-      id,
-      await hashKey(key),
-      new Date().toISOString(),
-      options.expiresAt ?? null,
-      options.revokedAt ?? null,
-    )
-    .run();
-  return { id, key };
-}
-
-function postDocument(
-  body: BodyInit | null,
-  headers: Record<string, string> = {},
-): Promise<Response> {
-  return Promise.resolve(app.request("/v1/documents", { method: "POST", body, headers }, env));
-}
-
-function asCreator(key: string): Record<string, string> {
-  return { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
-}
-
-interface CreatedDocument {
-  id: string;
-  managerKey: string;
-  editorKey: string;
-  readerKey: string;
-}
-
-async function createDocument(key: string, body: unknown = { title: "Test trip" }) {
-  const response = await postDocument(JSON.stringify(body), asCreator(key));
-  expect(response.status).toBe(201);
-  return response.json<CreatedDocument>();
-}
-
-/** A JSON object whose UTF-8 encoding is exactly `bytes` long. */
-function jsonObjectOfSize(bytes: number): string {
-  const wrapper = '{"padding":""}';
-  return `{"padding":"${"x".repeat(bytes - wrapper.length)}"}`;
+function createDocument(creatorKey: string, body?: unknown): Promise<CreatedDocument> {
+  return createDocumentWith({ creatorKey, body });
 }
 
 describe("POST /v1/documents: authentication", () => {
