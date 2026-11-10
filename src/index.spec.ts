@@ -4,10 +4,11 @@ import app from "./index";
 
 // Smoke tests for the tooling: the Workers runtime, the D1 binding and the migrations.
 describe("test setup", () => {
-  it("serves a request through Hono", async () => {
+  it("serves a request through Hono, with unknown paths as a Problem Details 404", async () => {
     const response = await app.request("/", {}, env);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
   });
 
   it("applies the migrations to the local D1", async () => {

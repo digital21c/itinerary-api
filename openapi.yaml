@@ -1,0 +1,180 @@
+openapi: 3.1.1
+info:
+  title: Itinerary API
+  version: 1.0.0
+  summary: A store of versioned travel itineraries, reached with bearer keys.
+  description: |
+    Holding a key is the permission. There are no users.
+
+    | Key     | Prefix | Allows                                          |
+    | ------- | ------ | ----------------------------------------------- |
+    | Creator | `ck_`  | Creating documents, nothing else                |
+    | Reader  | `rk_`  | Reading one document's published version        |
+    | Editor  | `ek_`  | Reader actions, plus drafts, history, publishing |
+    | Manager | `mk_`  | Editor actions, plus managing the document's keys |
+
+    Keys travel only in `Authorization: Bearer <key>`. A missing, unknown, revoked or expired
+    key gets the same `401`, which reveals nothing about why.
+
+    Errors are Problem Details (RFC 9457). The `type` is `about:blank` when the status code says
+    everything, and a `/problems/…` URI when a client needs to tell problems apart.
+
+servers:
+  - url: /
+
+security:
+  - bearerKey: []
+
+paths:
+  /v1/documents:
+    post:
+      operationId: createDocument
+      summary: Create a document
+      description: |
+        Requires a creator key. Stores the body as version 1 and issues the document's first
+        manager, editor and reader keys. The keys are shown only in this response and can never
+        be retrieved again.
+
+        The new document is unpublished, so its reader key gets `404` until a version is
+        published.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentBody"
+      responses:
+        "201":
+          description: Created. Store the keys now.
+          headers:
+            Location:
+              description: The new document's URL.
+              schema:
+                type: string
+                example: /v1/documents/7d1c0a4e-2b3f-4f60-9c1a-5e8d2f6b9a01
+            ETag:
+              description: The version just stored, always `"1"`.
+              schema:
+                type: string
+                example: '"1"'
+            Cache-Control:
+              description: Always `no-store`, because the response contains keys.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedDocument"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: The creator key has reached its cap on documents.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: /problems/document-limit-reached
+                title: Document limit reached
+                status: 409
+                detail: This creator key can create at most 100 documents.
+        "413":
+          $ref: "#/components/responses/ContentTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+
+components:
+  securitySchemes:
+    bearerKey:
+      type: http
+      scheme: bearer
+      description: A key with one of the prefixes `ck_`, `rk_`, `ek_` or `mk_`.
+
+  schemas:
+    DocumentBody:
+      description: |
+        An itinerary. Until the itinerary schema is designed, any JSON object (not an array or
+        a single value) of at most 200,000 bytes of UTF-8. Never put personal data in it: no
+        traveller names, contact, passport or payment details.
+      type: object
+      additionalProperties: true
+
+    CreatedDocument:
+      type: object
+      required: [id, managerKey, editorKey, readerKey]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The document's public ID.
+        managerKey:
+          $ref: "#/components/schemas/Key"
+        editorKey:
+          $ref: "#/components/schemas/Key"
+        readerKey:
+          $ref: "#/components/schemas/Key"
+
+    Key:
+      type: string
+      description: A prefix, then 43 base64url characters. A secret, shown once.
+      pattern: "^(ck|rk|ek|mk)_[A-Za-z0-9_-]{43}$"
+
+    Problem:
+      description: Problem Details (RFC 9457).
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+
+  responses:
+    BadRequest:
+      description: The body isn't valid JSON or valid UTF-8.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: |
+        The key is missing, malformed, unknown, revoked, expired or of the wrong kind. All of
+        these get the same response.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ContentTooLarge:
+      description: The body is over 200,000 bytes.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnsupportedMediaType:
+      description: The body isn't `application/json`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnprocessableContent:
+      description: The body is valid JSON but not a JSON object.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"

@@ -187,7 +187,8 @@ Capability-based access: **holding a key is the permission.** There are no users
   revealing nothing. A valid document key without enough permission returns `403`. A creator
   key used on a document, or a document key used to create, counts as unknown: `401`.
 - No rate limiting at first, by decision (see Hosting And Limits).
-- Headers rather than cookies means CSRF doesn't apply. Configure CORS for browser clients.
+- Headers rather than cookies means CSRF doesn't apply. CORS allows any origin (see
+  API Design Conventions).
 
 ## Revocation
 
@@ -382,11 +383,19 @@ No row → `401`. A reader key → `403`.
 
 ## Creating
 
-1. Hash the key and look it up in `creator_keys`, ignoring revoked keys. No match → `401`.
-2. Check the creator key's cap on documents.
-3. Generate the document ID and its first manager, editor and reader keys.
-4. In one `batch()`, insert the document, version 1 and the three key rows.
-5. Return `201` with `{ id, managerKey, editorKey, readerKey }`, shown only this once.
+1. Check the key's shape (`recogniseKey`), hash it and look it up in `creator_keys`,
+   ignoring revoked and expired keys, in one query that also counts the key's documents.
+   No match → `401`. Authentication comes before any check of the body.
+2. Check the body: `415` unless `application/json`, `413` over the size limit (counted while
+   reading, not trusted from `Content-Length`), `400` for invalid UTF-8 or JSON, `422`
+   unless a JSON object. The request body is the document itself, with no envelope.
+3. Check the creator key's cap on documents → `409`. It is a soft cap: simultaneous creates
+   can pass it by one or two, which is harmless for a storage limit.
+4. Generate the document ID and its first manager, editor and reader keys.
+5. In one `batch()`, insert the document, version 1 and the three key rows, and set the
+   creator key's `last_used_at`.
+6. Return `201` with `{ id, managerKey, editorKey, readerKey }`, shown only this once,
+   plus `Location`, `ETag: "1"` and `Cache-Control: no-store`.
 
 A new document starts unpublished, so its reader key gets `404` until someone publishes.
 
@@ -516,7 +525,16 @@ DELETE  /v1/documents/{id}/keys/{keyId}  revoke → 204
 
 ## Conventions
 
-- Errors use Problem Details (RFC 9457), `application/problem+json`.
+- Errors use Problem Details (RFC 9457), `application/problem+json`, via
+  `src/utils/problem.ts`. `type` is `about:blank` when the status says everything, and a
+  relative `/problems/<slug>` URI for problems clients must tell apart
+  (e.g. `/problems/document-limit-reached`).
+- Request and response bodies are the document itself, with no envelope; the version travels
+  in `ETag` / `If-Match`.
+- Any response that contains a key gets `Cache-Control: no-store`.
+- Every `401` is the same response, with `WWW-Authenticate: Bearer`.
+- CORS allows any origin (`*`) without credentials: with bearer keys and no cookies it
+  protects nothing. Exposed headers: `ETag`, `Location`.
 - Writes require `If-Match`. Missing → `428 Precondition Required`. Stale → `412`.
 - `GET` latest and `GET` published honour `If-None-Match` → `304`, which suits travellers
   on poor connections. Separate URLs for latest and published, so one URL never returns
@@ -527,7 +545,7 @@ DELETE  /v1/documents/{id}/keys/{keyId}  revoke → 204
   Security Model, `404` for a key not on this document or nothing published, `409 Conflict` for a manager key
   revoking itself or a cap being hit, `410 Gone` for a pruned version or for an editor or
   manager key reading a deleted document (readers get `404`: its publication was removed),
-  `413 Content Too Large`,
+  `413 Content Too Large`, `415 Unsupported Media Type` for a body that isn't JSON,
   `429 Too Many Requests` with `Retry-After` (once throttling is added).
 - Retried writes are safe: a retry after a successful-but-timed-out write gets `412`; the
   client fetches the latest version and compares.
@@ -580,7 +598,8 @@ group can share one address). Check what the free plan includes at that point.
 - Unit tests for `models/`: permission rules, retention, version numbering, validation,
   key format.
 - Repository tests against a local D1.
-- Route tests with `app.request()`.
+- Route tests with `app.request(path, init, env)` against the real local D1 repositories,
+  not fakes. Fakes can behave differently from real SQL; add one only if a test needs it.
 - Every security boundary has a test: each key can do only what the operations table allows,
   a key for one document doesn't work on another, a revoked key is rejected, unknown document
   and wrong key are indistinguishable, keys never appear in logs or errors.
@@ -638,8 +657,8 @@ Ask before building anything that depends on these.
    (decided 2026-11-10), a body is any JSON object (not an array or a single value) within
    the size limit, and `documents.type` is always `'itinerary'`. The real schema will tighten
    this, and should avoid open-ended text (see Data Protection).
-4. **Smaller API details:** allowed CORS origins, the history cursor format and page size,
-   the base URI for problem `type`s, and how often `creator_keys.last_used_at` is updated.
+4. **Smaller API details:** the history cursor format and page size. (CORS, problem `type`s
+   and `creator_keys.last_used_at`, set on every create, were settled in build step 3.)
 
 Settled on 2026-11-10 (now recorded above): npm, `@cloudflare/vitest-plugin`, ESLint
 + Prettier, Zod, spec-first OpenAPI, the limits table (200 KB documents), `410` for deleted

@@ -1,9 +1,4 @@
-import { Hono } from "hono";
+import { createApp } from "./app";
+import { d1Repositories } from "./repositories/d1";
 
-const app = new Hono<{ Bindings: Env }>();
-
-app.get("/", (c) => {
-  return c.text("Hello Hono!");
-});
-
-export default app;
+export default createApp((env) => d1Repositories(env.DB));
