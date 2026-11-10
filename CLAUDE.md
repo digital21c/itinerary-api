@@ -445,14 +445,16 @@ on conflict (document_id) do update set
   | Setting                     | Value  |
   | --------------------------- | ------ |
   | `MAX_VERSIONS`              | 10     |
-  | Maximum document size       | 500 KB, measured on the UTF-8 request body → `413` |
+  | Maximum document size       | 200 KB (200,000 bytes, as Cloudflare counts), measured on the UTF-8 request body → `413` |
   | Documents per creator key   | 100    |
   | Keys per document           | 20     |
   | Minimum age before pruning  | none   |
 
   A cap being hit returns `409 Conflict` with its own problem `type` (`403` already means
-  "not enough permission"). At 500 KB and 10 versions a document can reach 5 MB, so about
-  100 documents could fill D1's 500 MB free database: one creator key's full cap.
+  "not enough permission"). At 200 KB and 10 versions a document can reach 2 MB, so about
+  250 documents could fill D1's 500 MB free database; one creator key's full cap is 200 MB.
+  At 200 KB, parsing and validating a body should stay well inside the Workers Free plan's
+  10 ms CPU limit per request, but measure it once writes exist.
 - Retention lets a leaked editor key flush good history by writing junk versions, and
   nothing throttles that at first. Pruning spares the published version, and D1 Time Travel
   (7 days on the free plan) is the last-resort backstop.
@@ -590,10 +592,13 @@ Ask before building anything that depends on these.
    is backed up or moved.
 2. **Client details:** web, mobile or both, offline copies for travellers, and how the
    planner client handles `412` conflicts between staff.
-3. **Document body schema:** the itinerary schema hasn't been designed yet, nor the allowed
-   values of `documents.type`. Until it is, what does the API accept as a body?
+3. **Document body schema:** the itinerary schema hasn't been designed yet. Until it is
+   (decided 2026-11-10), a body is any JSON object (not an array or a single value) within
+   the size limit, and `documents.type` is always `'itinerary'`. The real schema will tighten
+   this, and should avoid open-ended text (see Data Protection).
 4. **Smaller API details:** allowed CORS origins, the history cursor format and page size,
    the base URI for problem `type`s, and how often `creator_keys.last_used_at` is updated.
 
 Settled on 2026-11-10 (now recorded above): npm, `@cloudflare/vitest-plugin`, ESLint
-+ Prettier, Zod, spec-first OpenAPI, the limits table, `410` for deleted documents.
++ Prettier, Zod, spec-first OpenAPI, the limits table (200 KB documents), `410` for deleted
+documents, and the interim body rule above.
