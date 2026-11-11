@@ -3,7 +3,6 @@
  * are opaque strings here.
  */
 
-const STRONG_TAG = /^"([\x21\x23-\x7e]*)"$/;
 const ANY_TAG = /^(?:W\/)?"([\x21\x23-\x7e]*)"$/;
 
 /** `"value"`, for an `ETag` header. */
@@ -12,11 +11,12 @@ export function strongTag(value: string): string {
 }
 
 /**
- * The value of an `If-Match` holding exactly one strong tag, or `null`. Deliberately stricter
- * than RFC 9110: `*` and lists make no sense for "save over the version I edited".
+ * The value of a header holding exactly one entity tag, strong or weak (`"3"` or `W/"3"`), or
+ * `null` for `*`, a list or anything malformed. Whether a weak tag is acceptable is the
+ * caller's decision.
  */
-export function singleStrongTag(header: string): string | null {
-  return STRONG_TAG.exec(header.trim())?.[1] ?? null;
+export function singleTagValue(header: string): string | null {
+  return ANY_TAG.exec(header.trim())?.[1] ?? null;
 }
 
 /**

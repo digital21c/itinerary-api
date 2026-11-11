@@ -1,6 +1,6 @@
 import { parseVersionNumber } from "../models/versions";
 import type { VersionHead } from "../repositories/types";
-import { singleStrongTag } from "../utils/entity-tags";
+import { singleTagValue } from "../utils/entity-tags";
 import {
   documentGone,
   malformedIfMatch,
@@ -10,8 +10,13 @@ import {
 
 /**
  * The `If-Match` checks every content write makes, before its body is read (RFC 9110 §13.2.1):
- * `428` if missing, `400` unless exactly one strong version tag, `410` if the document is
- * deleted, `412` unless it names the latest version.
+ * `428` if missing, `400` unless exactly one version tag, `410` if the document is deleted,
+ * `412` unless it names the latest version.
+ *
+ * `W/"3"` is accepted as `"3"`, although RFC 9110 §13.1.1 asks for strong comparison here.
+ * Cloudflare's edge weakens the `ETag` whenever it compresses a response, and browsers can't
+ * turn compression off, so a strict check would refuse every browser save. The number alone
+ * identifies a version whose content never changes, so the weak form names the same thing.
  *
  * With `allowRestore`, a deleted document accepts a write whose `If-Match` names its deletion
  * marker: that is how a deleted document is restored. Any other version is still `410`.
@@ -27,7 +32,7 @@ export function checkWritePreconditions(
   if (ifMatch === undefined) {
     return { ok: false, response: preconditionRequired() };
   }
-  const tag = singleStrongTag(ifMatch);
+  const tag = singleTagValue(ifMatch);
   const baseVersion = tag === null ? null : parseVersionNumber(tag);
   if (baseVersion === null) {
     return { ok: false, response: malformedIfMatch() };

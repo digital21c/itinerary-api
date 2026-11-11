@@ -56,7 +56,7 @@ paths:
                 type: string
                 example: /v1/documents/7d1c0a4e-2b3f-4f60-9c1a-5e8d2f6b9a01
             ETag:
-              description: The version just stored, always `"1"`.
+              description: The version just stored, always `"1"` (or `W/"1"`, see `VersionETag`).
               schema:
                 type: string
                 example: '"1"'
@@ -697,10 +697,12 @@ components:
       name: If-Match
       in: header
       required: true
-      description: The version you are changing, as a single strong tag such as `"3"`.
+      description: |
+        The version you are changing, as a single tag such as `"3"`. The weak form `W/"3"`
+        is accepted as the same version, so the `ETag` you received can be sent back as it is.
       schema:
         type: string
-        pattern: '^"[1-9][0-9]*"$'
+        pattern: '^(W/)?"[1-9][0-9]*"$'
     DocumentId:
       name: id
       in: path
@@ -725,9 +727,14 @@ components:
         type: string
         const: no-store
     VersionETag:
-      description: The version number as a strong entity tag, such as `"3"`.
+      description: |
+        The version number as an entity tag, such as `"3"`. The API sends it strong, but
+        Cloudflare's edge sends it weak, `W/"3"`, when it compresses the response (which a
+        browser can't prevent). Both name the same version: send either back in `If-Match`
+        or `If-None-Match`, and strip any `W/` before reading the number.
       schema:
         type: string
+        pattern: '^(W/)?"[1-9][0-9]*"$'
         example: '"3"'
 
   securitySchemes:

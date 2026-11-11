@@ -89,7 +89,9 @@ Every endpoint is in `openapi.yaml`.
 ## Workflow: edit a trip (staff)
 
 1. `GET /v1/documents/{id}` with an editor or manager key. Keep the `ETag` (e.g. `"3"`):
-   it is the version you are editing.
+   it is the version you are editing. A compressed response, which is what browsers get,
+   carries it weak, as `W/"3"`: it is the same version, so send it back exactly as received,
+   and strip the `W/` only when you need the number (for example to publish it).
 2. Save with `POST /v1/documents/{id}/versions`, the whole new document as the body, and
    `If-Match: "3"`. The `201` gives the new version's `ETag` (`"4"`) and `Location`; use the
    new `ETag` for the next save.
@@ -100,7 +102,7 @@ Every endpoint is in `openapi.yaml`.
 4. A save that succeeded but timed out, then retried, also gets `412`: fetch the latest and
    compare before saving again.
 5. `428` means `If-Match` was missing; `400` means it wasn't a single version tag like `"3"`
-   (no `*`, no lists, no `W/`).
+   or `W/"3"` (no `*`, no lists).
 6. `410 Gone` means the trip was deleted.
 7. To avoid re-downloading, send `If-None-Match: "3"` on the `GET`: `304` means it hasn't
    changed.

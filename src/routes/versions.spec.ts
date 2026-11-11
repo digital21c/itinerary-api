@@ -133,7 +133,6 @@ describe("POST /v1/documents/{id}/versions", () => {
   it.each([
     ["an unquoted version", "1"],
     ["any version", "*"],
-    ["a weak tag", 'W/"1"'],
     ["a list", '"1", "2"'],
     ["version 0", '"0"'],
     ["a leading zero", '"01"'],
@@ -153,6 +152,18 @@ describe("POST /v1/documents/{id}/versions", () => {
 
     const stale = await saveVersion(document.id, document.managerKey, '"1"');
 
+    expect(stale.status).toBe(412);
+    expect(await storedVersions(document.id)).toEqual([1, 2]);
+  });
+
+  it("accepts a weak tag in If-Match as the same version, as the edge sends after compressing", async () => {
+    const document = await createDocument();
+
+    const response = await saveVersion(document.id, document.editorKey, 'W/"1"');
+    const stale = await saveVersion(document.id, document.managerKey, 'W/"1"');
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("ETag")).toBe('"2"');
     expect(stale.status).toBe(412);
     expect(await storedVersions(document.id)).toEqual([1, 2]);
   });

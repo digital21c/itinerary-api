@@ -174,7 +174,9 @@ Points worth knowing:
 
 - Order of checks on a write: key (`401`/`403`), preconditions (`428`/`400`/`410`/`412`),
   then the body. `routes/preconditions.ts` (`checkWritePreconditions`) is the one place
-  saves, `PATCH` and `DELETE` evaluate `If-Match`, and where restoring is allowed. Preconditions come before the body is read (RFC 9110 §13.2.1), which also
+  saves, `PATCH` and `DELETE` evaluate `If-Match`, and where restoring is allowed. It reads
+  `W/"3"` as `"3"`, because Cloudflare's edge weakens the `ETag` the Worker sends whenever it
+  compresses a response. Preconditions come before the body is read (RFC 9110 §13.2.1), which also
   saves the CPU of parsing a body that would be refused.
 - `utils/request-body.ts` counts bytes while reading (Hono's `bodyLimit` trusts
   `Content-Length`) and decodes strict UTF-8. `routes/json-body.ts` adds JSON parsing and a

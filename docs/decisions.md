@@ -7,6 +7,18 @@ a decision is made, in the same commit as the change it causes.
 
 ## 2026-11-11
 
+**`If-Match` accepts a weak tag, `W/"3"`, as version 3** (issue #1). Cloudflare's edge
+weakens the `ETag` whenever it compresses a response, and browsers always ask for
+compression, so a browser that echoed its `ETag` got `400` on every save. *Why:* the tag
+names a version whose content never changes, so the weak and strong forms identify the
+same thing, and the lost-update check is unchanged. This departs from RFC 9110 §13.1.1
+(strong comparison for `If-Match`), on purpose. *Rejected:* `Cache-Control: no-transform`
+(loses compression on bodies up to 200 KB, for travellers on poor connections); keeping
+tags strong at the edge (a zone setting that `workers.dev` doesn't offer); compressing in
+the Worker (more code and CPU); making every client strip `W/` (pushes an edge quirk into
+each client, and the obvious echo would still fail). The contract now allows `W/` on
+`ETag` too.
+
 **Only managers issue keys, reader keys included.** The front-end's design had editors
 issuing reader keys; it now follows the API. *Why:* one role controls who has access.
 
@@ -135,7 +147,8 @@ publishes the later wins, which is what each asked for. `If-Match` protects cont
 **A publish also checks, in the same statement, that the document isn't deleted.** *Why:*
 otherwise a publish racing a delete could make a deleted document readable again.
 
-**`If-Match` must be exactly one strong tag, `"3"`.** `*`, lists and weak tags → `400`.
+**`If-Match` must be exactly one tag, `"3"`.** `*` and lists → `400` (weak tags were
+also refused until 2026-11-11, see above).
 *Why:* "save over the version I edited" names one version; `*` would skip the conflict
 check. Stricter than RFC 9110 allows, on purpose. `If-None-Match` stays fully standard.
 
